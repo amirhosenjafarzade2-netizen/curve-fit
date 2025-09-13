@@ -13,14 +13,12 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
         raise ValueError(f"Failed to read Excel file: {str(e)}")
     lines = []
     skipped_lines = []
-    invalid_x_lines = []
     row = 0
     while row < df.shape[0]:
         if not pd.isna(df.iloc[row, 0]) and pd.isna(df.iloc[row, 1]):
             line_name = str(df.iloc[row, 0]).strip()
             x_data = []
             y_data = []
-            invalid_x_values = []
             row += 1
             invalid_x = False
             while row < df.shape[0]:
@@ -32,11 +30,6 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                     y_val = pd.to_numeric(df.iloc[row, 1], errors='coerce')
                     if pd.isna(x_val) or pd.isna(y_val):
                         print(f"Warning: Line '{line_name}' has invalid x or y at row {row+1}: x={raw_x}, y={df.iloc[row, 1]}")
-                        invalid_x_values.append(f"x={raw_x} (parsed as NaN)")
-                        invalid_x = True
-                    elif x_val <= 0:
-                        print(f"Warning: Line '{line_name}' has non-positive x at row {row+1}: x={x_val}")
-                        invalid_x_values.append(f"x={x_val}")
                         invalid_x = True
                     else:
                         x_data.append(float(x_val))
@@ -59,14 +52,12 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                 if has_duplicates and not average_duplicates:
                     print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines.")
                     skipped_lines.append(line_name)
-                if invalid_x:
-                    invalid_x_lines.append((line_name, invalid_x_values))
                 lines.append((line_name, x_data, y_data, has_duplicates, invalid_x))
             else:
                 print(f"Warning: Line '{line_name}' skipped: only {len(x_data)} valid points (need at least {min_points}).")
         else:
             row += 1
-    return lines, skipped_lines, invalid_x_lines
+    return lines, skipped_lines
 
 def suggest_best_poly_degree(x, y, max_degree=10):
     best_degree = 1
@@ -89,13 +80,13 @@ def calculate_adjusted_r2(r2, n, p):
         return 1 - (1 - r2) * (n - 1) / (n - p - 1)
     return -float('inf')
 
-def suggest_best_method(x, y, has_duplicates, has_invalid_x, max_poly_degree=10):
+def suggest_best_method(x, y, has_invalid_x):
     results = []
     n = len(x)
     
     # Polynomial
     try:
-        best_poly_degree, best_poly_r2 = suggest_best_poly_degree(x, y, max_poly_degree)
+        best_poly_degree, best_poly_r2 = suggest_best_poly_degree(x, y)
         coeffs, r2, desc = fit_polynomial(x, y, degree=best_poly_degree)
         p = best_poly_degree + 1
         adj_r2 = calculate_adjusted_r2(r2, n, p)
@@ -113,37 +104,35 @@ def suggest_best_method(x, y, has_duplicates, has_invalid_x, max_poly_degree=10)
     except Exception as e:
         print(f"Exponential suggestion failed: {str(e)}")
     
-    # Logarithmic (skip if invalid x)
+    # Logarithmic (filter x > 0)
     if not has_invalid_x:
         try:
-            coeffs, r2, desc = fit_logarithmic(x, y)
-            if coeffs:
-                p = len(coeffs)
-                adj_r2 = calculate_adjusted_r2(r2, n, p)
-                results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
+            valid = x > 0
+            x_valid = x[valid]
+            y_valid = y[valid]
+            if len(x_valid) >= 2:
+                coeffs, r2, desc = fit_logarithmic(x_valid, y_valid)
+                if coeffs:
+                    p = len(coeffs)
+                    adj_r2 = calculate_adjusted_r2(r2, len(x_valid), p)
+                    results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
         except Exception as e:
             print(f"Logarithmic suggestion failed: {str(e)}")
     
-    # Compound Poly+Log (skip if invalid x)
+    # Compound Poly+Log (filter x > 0)
     if not has_invalid_x:
         try:
-            coeffs, r2, desc = fit_compound_poly_log(x, y)
-            if coeffs:
-                p = len(coeffs)
-                adj_r2 = calculate_adjusted_r2(r2, n, p)
-                results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
+            valid = x > 0
+            x_valid = x[valid]
+            y_valid = y[valid]
+            if len(x_valid) >= 3:
+                coeffs, r2, desc = fit_compound_poly_log(x_valid, y_valid)
+                if coeffs:
+                    p = len(coeffs)
+                    adj_r2 = calculate_adjusted_r2(r2, len(x_valid), p)
+                    results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
         except Exception as e:
             print(f"Compound Poly+Log suggestion failed: {str(e)}")
-    
-    # Spline (skip if duplicates and not averaged)
-    if not (has_duplicates and not average_duplicates):
-        try:
-            coeffs, r2, desc = fit_spline(x, y, degree=3)
-            p = len(coeffs) // 2
-            adj_r2 = calculate_adjusted_r2(r2, n, p)
-            results.append(("Spline", coeffs, r2, adj_r2, "Cubic Spline: coeffs then knots", {'degree': 3}))
-        except ValueError as e:
-            print(f"Spline suggestion failed: {str(e)}")
     
     # Select best or default to Polynomial if all fail
     if results:
@@ -174,11 +163,14 @@ def fit_logarithmic(x, y):
     def log_model(x, a, b):
         return a * np.log(x) + b
     try:
-        if np.any(x <= 0):
-            return None, None, "Logarithmic fit failed: x values must be positive"
-        popt, _ = curve_fit(log_model, x, y, p0=[1, 1])
-        y_pred = log_model(x, *popt)
-        r2 = r2_score(y, y_pred)
+        valid = x > 0
+        x_valid = x[valid]
+        y_valid = y[valid]
+        if len(x_valid) < 2:
+            return None, None, "Logarithmic fit failed: insufficient valid points (x > 0)"
+        popt, _ = curve_fit(log_model, x_valid, y_valid, p0=[1, 1])
+        y_pred = log_model(x_valid, *popt)
+        r2 = r2_score(y_valid, y_pred)
         return popt.tolist(), r2, "Logarithmic: y = a * log(x) + b"
     except:
         return None, None, "Logarithmic fit failed"
@@ -187,11 +179,14 @@ def fit_compound_poly_log(x, y):
     def poly_log_model(x, a, b, c):
         return a * x**2 + b * np.log(x) + c
     try:
-        if np.any(x <= 0):
-            return None, None, "Compound Poly+Log fit failed: x values must be positive"
-        popt, _ = curve_fit(poly_log_model, x, y, p0=[1, 1, 1])
-        y_pred = poly_log_model(x, *popt)
-        r2 = r2_score(y, y_pred)
+        valid = x > 0
+        x_valid = x[valid]
+        y_valid = y[valid]
+        if len(x_valid) < 3:
+            return None, None, "Compound Poly+Log fit failed: insufficient valid points (x > 0)"
+        popt, _ = curve_fit(poly_log_model, x_valid, y_valid, p0=[1, 1, 1])
+        y_pred = poly_log_model(x_valid, *popt)
+        r2 = r2_score(y_valid, y_pred)
         return popt.tolist(), r2, "Compound Poly+Log: y = a*x^2 + b*log(x) + c"
     except:
         return None, None, "Compound fit failed"
