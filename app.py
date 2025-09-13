@@ -23,9 +23,9 @@ st.markdown("""
 - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
 - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
 - **Exponential**: a, b, c for y = a * exp(b*x) + c.
-- **Logarithmic**: a, b for y = a * log(x) + b.
-- **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c.
-- **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Note: Requires strictly increasing x values unless duplicates are averaged.
+- **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0).
+- **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0).
+- **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
 """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
@@ -33,21 +33,23 @@ average_duplicates = st.checkbox("Average y values for duplicate x values (enabl
 
 if uploaded_file:
     try:
-        lines, skipped_lines = parse_excel(uploaded_file, average_duplicates=average_duplicates)
+        lines, skipped_lines, invalid_x_lines = parse_excel(uploaded_file, average_duplicates=average_duplicates)
         if not lines:
             st.error("No valid lines found in the file.")
         else:
             st.success(f"Found {len(lines)} valid lines.")
             if skipped_lines and not average_duplicates:
                 st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines): {', '.join(skipped_lines)}")
+            if invalid_x_lines:
+                st.warning(f"Found {len(invalid_x_lines)} lines with non-positive or invalid x values (not suitable for logarithmic or compound fits): {', '.join(invalid_x_lines)}")
 
             # Suggest best method
             st.subheader("Suggested Best Method (Based on Adjusted R²)")
             suggestions = []
-            for line_name, x, y, has_duplicates in lines:
+            for line_name, x, y, has_duplicates, has_invalid_x in lines:
                 if len(x) > 1:
                     try:
-                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_duplicates and not average_duplicates)
+                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_duplicates and not average_duplicates, has_invalid_x)
                         suggestions.append((line_name, best_method, r2, adj_r2, desc))
                         st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
                     except ValueError as e:
@@ -67,7 +69,7 @@ if uploaded_file:
                 min_points = 3
 
             # Filter lines with enough points
-            filtered_lines = [(name, x, y, has_duplicates) for name, x, y, has_duplicates in lines if len(x) >= min_points]
+            filtered_lines = [(name, x, y, has_duplicates, has_invalid_x) for name, x, y, has_duplicates, has_invalid_x in lines if len(x) >= min_points]
             if len(filtered_lines) < len(lines):
                 st.warning(f"Some lines skipped due to insufficient points for {method} (need at least {min_points}).")
 
@@ -81,10 +83,13 @@ if uploaded_file:
                     "Compound Poly+Log": fit_compound_poly_log,
                     "Spline": fit_spline
                 }
-                for line_name, x, y, has_duplicates in filtered_lines:
+                for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
                     try:
                         if method == "Spline" and has_duplicates and not average_duplicates:
                             st.warning(f"Line '{line_name}': Skipped for Spline due to duplicate x values.")
+                            continue
+                        if method in ["Logarithmic", "Compound Poly+Log"] and has_invalid_x:
+                            st.warning(f"Line '{line_name}': Skipped for {method} due to non-positive or invalid x values.")
                             continue
                         fit_func = fit_funcs[method]
                         coeffs, r2, model_desc = fit_func(x, y, **params)
