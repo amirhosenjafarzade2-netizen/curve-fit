@@ -1,6 +1,6 @@
 # app.py - Main Streamlit app for curve fitting
 # Run with: streamlit run app.py
-# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl
+# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, plotly, openpyxl
 # Install via: pip install -r requirements.txt
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown("""
 2. Choose a fitting method (and parameters like degree).
 3. Optionally enable averaging of y values for duplicate x values (for spline compatibility).
 4. View suggestions for the best overall method based on Adjusted R².
-5. Fit curves, view graphs, and download the output Excel.
+5. Fit curves, view interactive graphs (hover for details, zoom/pan), and download the output Excel.
 
 **Output Excel Guide:**
 - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
@@ -41,7 +41,9 @@ if uploaded_file:
             if skipped_lines and not average_duplicates:
                 st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines): {', '.join(skipped_lines)}")
             if invalid_x_lines:
-                st.warning(f"Found {len(invalid_x_lines)} lines with non-positive or invalid x values (not suitable for logarithmic or compound fits): {', '.join(invalid_x_lines)}")
+                st.warning("Lines with non-positive or invalid x values (not suitable for logarithmic or compound fits):")
+                for line_name, invalid_values in invalid_x_lines:
+                    st.warning(f"Line '{line_name}': Invalid x values: {invalid_values}")
 
             # Suggest best method
             st.subheader("Suggested Best Method (Based on Adjusted R²)")
@@ -97,8 +99,8 @@ if uploaded_file:
                             result_row = [line_name] + coeffs + [r2]
                             results.append(result_row)
                             st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                            fig = plot_fit(x, y, coeffs, method, params)
-                            st.pyplot(fig)
+                            fig = plot_fit(x, y, coeffs, method, params, r2, line_name)
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
                             st.warning(f"Line '{line_name}': {model_desc}")
                     except ValueError as e:
