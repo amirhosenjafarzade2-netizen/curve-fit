@@ -13,6 +13,7 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
         raise ValueError(f"Failed to read Excel file: {str(e)}")
     lines = []
     skipped_lines = []
+    invalid_x_lines = []
     row = 0
     while row < df.shape[0]:
         if not pd.isna(df.iloc[row, 0]) and pd.isna(df.iloc[row, 1]):
@@ -20,6 +21,7 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
             x_data = []
             y_data = []
             row += 1
+            invalid_x = False
             while row < df.shape[0]:
                 if (not pd.isna(df.iloc[row, 0]) and pd.isna(df.iloc[row, 1])) or pd.isna(df.iloc[row, 0]):
                     break
@@ -27,8 +29,12 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                     x_val = pd.to_numeric(df.iloc[row, 0], errors='coerce')
                     y_val = pd.to_numeric(df.iloc[row, 1], errors='coerce')
                     if not pd.isna(x_val) and not pd.isna(y_val):
-                        x_data.append(float(x_val))
-                        y_data.append(float(y_val))
+                        if x_val <= 0:
+                            invalid_x = True
+                            print(f"Warning: Line '{line_name}' has non-positive x value: {x_val}")
+                        else:
+                            x_data.append(float(x_val))
+                            y_data.append(float(y_val))
                 row += 1
             if len(x_data) >= min_points:
                 if average_duplicates:
@@ -47,12 +53,14 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                 if has_duplicates and not average_duplicates:
                     print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines.")
                     skipped_lines.append(line_name)
-                lines.append((line_name, x_data, y_data, has_duplicates))
+                if invalid_x:
+                    invalid_x_lines.append(line_name)
+                lines.append((line_name, x_data, y_data, has_duplicates, invalid_x))
             else:
-                print(f"Warning: Line '{line_name}' skipped: only {len(x_data)} points (need at least {min_points}).")
+                print(f"Warning: Line '{line_name}' skipped: only {len(x_data)} valid points (need at least {min_points}).")
         else:
             row += 1
-    return lines, skipped_lines
+    return lines, skipped_lines, invalid_x_lines
 
 def suggest_best_poly_degree(x, y, max_degree=10):
     best_degree = 1
@@ -75,7 +83,7 @@ def calculate_adjusted_r2(r2, n, p):
         return 1 - (1 - r2) * (n - 1) / (n - p - 1)
     return -float('inf')
 
-def suggest_best_method(x, y, has_duplicates, max_poly_degree=10):
+def suggest_best_method(x, y, has_duplicates, has_invalid_x, max_poly_degree=10):
     results = []
     n = len(x)
     
@@ -99,27 +107,29 @@ def suggest_best_method(x, y, has_duplicates, max_poly_degree=10):
     except Exception as e:
         print(f"Exponential suggestion failed: {str(e)}")
     
-    # Logarithmic
-    try:
-        coeffs, r2, desc = fit_logarithmic(x, y)
-        if coeffs:
-            p = len(coeffs)
-            adj_r2 = calculate_adjusted_r2(r2, n, p)
-            results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
-    except Exception as e:
-        print(f"Logarithmic suggestion failed: {str(e)}")
+    # Logarithmic (skip if invalid x)
+    if not has_invalid_x:
+        try:
+            coeffs, r2, desc = fit_logarithmic(x, y)
+            if coeffs:
+                p = len(coeffs)
+                adj_r2 = calculate_adjusted_r2(r2, n, p)
+                results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
+        except Exception as e:
+            print(f"Logarithmic suggestion failed: {str(e)}")
     
-    # Compound Poly+Log
-    try:
-        coeffs, r2, desc = fit_compound_poly_log(x, y)
-        if coeffs:
-            p = len(coeffs)
-            adj_r2 = calculate_adjusted_r2(r2, n, p)
-            results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
-    except Exception as e:
-        print(f"Compound Poly+Log suggestion failed: {str(e)}")
+    # Compound Poly+Log (skip if invalid x)
+    if not has_invalid_x:
+        try:
+            coeffs, r2, desc = fit_compound_poly_log(x, y)
+            if coeffs:
+                p = len(coeffs)
+                adj_r2 = calculate_adjusted_r2(r2, n, p)
+                results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
+        except Exception as e:
+            print(f"Compound Poly+Log suggestion failed: {str(e)}")
     
-    # Spline (default degree 3, skip if duplicates and not averaged)
+    # Spline (skip if duplicates and not averaged)
     if not (has_duplicates and not average_duplicates):
         try:
             coeffs, r2, desc = fit_spline(x, y, degree=3)
@@ -156,7 +166,7 @@ def fit_exponential(x, y):
 
 def fit_logarithmic(x, y):
     def log_model(x, a, b):
-        return a * np.log(x + 1e-10) + b
+        return a * np.log(x) + b
     try:
         if np.any(x <= 0):
             return None, None, "Logarithmic fit failed: x values must be positive"
@@ -169,7 +179,7 @@ def fit_logarithmic(x, y):
 
 def fit_compound_poly_log(x, y):
     def poly_log_model(x, a, b, c):
-        return a * x**2 + b * np.log(x + 1e-10) + c
+        return a * x**2 + b * np.log(x) + c
     try:
         if np.any(x <= 0):
             return None, None, "Compound Poly+Log fit failed: x values must be positive"
