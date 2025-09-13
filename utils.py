@@ -12,6 +12,7 @@ def parse_excel(uploaded_file, min_points=2):
     except Exception as e:
         raise ValueError(f"Failed to read Excel file: {str(e)}")
     lines = []
+    skipped_lines = []
     row = 0
     while row < df.shape[0]:
         if not pd.isna(df.iloc[row, 0]) and pd.isna(df.iloc[row, 1]):
@@ -30,18 +31,21 @@ def parse_excel(uploaded_file, min_points=2):
                         y_data.append(float(y_val))
                 row += 1
             if len(x_data) >= min_points:
-                # Sort by x to ensure strictly increasing for splines
+                # Sort by x to ensure ascending order
                 x_data, y_data = zip(*sorted(zip(x_data, y_data)))
                 x_data = np.array(x_data)
                 y_data = np.array(y_data)
                 # Check for duplicates
-                if len(np.unique(x_data)) == len(x_data):
-                    lines.append((line_name, x_data, y_data))
-                else:
-                    print(f"Warning: Line '{line_name}' has duplicate x values, skipped for spline compatibility.")
+                has_duplicates = len(np.unique(x_data)) != len(x_data)
+                if has_duplicates:
+                    print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines.")
+                    skipped_lines.append(line_name)
+                lines.append((line_name, x_data, y_data, has_duplicates))
+            else:
+                print(f"Warning: Line '{line_name}' skipped: only {len(x_data)} points (need at least {min_points}).")
         else:
             row += 1
-    return lines
+    return lines, skipped_lines
 
 def suggest_best_poly_degree(x, y, max_degree=10):
     best_degree = 1
@@ -64,7 +68,7 @@ def calculate_adjusted_r2(r2, n, p):
         return 1 - (1 - r2) * (n - 1) / (n - p - 1)
     return -float('inf')
 
-def suggest_best_method(x, y, max_poly_degree=10):
+def suggest_best_method(x, y, has_duplicates, max_poly_degree=10):
     results = []
     n = len(x)
     
@@ -108,14 +112,15 @@ def suggest_best_method(x, y, max_poly_degree=10):
     except Exception as e:
         print(f"Compound Poly+Log suggestion failed: {str(e)}")
     
-    # Spline (default degree 3)
-    try:
-        coeffs, r2, desc = fit_spline(x, y, degree=3)
-        p = len(coeffs) // 2  # Approximate
-        adj_r2 = calculate_adjusted_r2(r2, n, p)
-        results.append(("Spline", coeffs, r2, adj_r2, "Cubic Spline: coeffs then knots", {'degree': 3}))
-    except ValueError as e:
-        print(f"Spline suggestion failed: {str(e)}")
+    # Spline (default degree 3, skip if duplicates)
+    if not has_duplicates:
+        try:
+            coeffs, r2, desc = fit_spline(x, y, degree=3)
+            p = len(coeffs) // 2
+            adj_r2 = calculate_adjusted_r2(r2, n, p)
+            results.append(("Spline", coeffs, r2, adj_r2, "Cubic Spline: coeffs then knots", {'degree': 3}))
+        except ValueError as e:
+            print(f"Spline suggestion failed: {str(e)}")
     
     # Select best or default to Polynomial if all fail
     if results:
