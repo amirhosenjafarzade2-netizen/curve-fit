@@ -1,6 +1,6 @@
 # app.py - Main Streamlit app for curve fitting
 # Run with: streamlit run app.py
-# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, plotly, openpyxl
+# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl
 # Install via: pip install -r requirements.txt
 
 import streamlit as st
@@ -17,7 +17,7 @@ st.markdown("""
 2. Choose a fitting method (and parameters like degree).
 3. Optionally enable averaging of y values for duplicate x values (for spline compatibility).
 4. View suggestions for the best overall method based on Adjusted R².
-5. Fit curves, view interactive graphs (hover for details, zoom/pan), and download the output Excel.
+5. Fit curves, view graphs, and download the output Excel.
 
 **Output Excel Guide:**
 - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
@@ -97,8 +97,8 @@ if uploaded_file:
                             results.append(result_row)
                             st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
                             # Use original x, y for plotting to include all points
-                            fig = plot_fit(x, y, coeffs, method, params, r2, line_name)
-                            st.plotly_chart(fig, use_container_width=True)
+                            fig = plot_fit(x, y, coeffs, method, params)
+                            st.pyplot(fig)
                         else:
                             st.warning(f"Line '{line_name}': {model_desc}")
                     except ValueError as e:
