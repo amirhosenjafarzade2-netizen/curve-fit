@@ -31,19 +31,21 @@ uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
 
 if uploaded_file:
     try:
-        lines = parse_excel(uploaded_file)
+        lines, skipped_lines = parse_excel(uploaded_file)
         if not lines:
             st.error("No valid lines found in the file.")
         else:
             st.success(f"Found {len(lines)} valid lines.")
+            if skipped_lines:
+                st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines): {', '.join(skipped_lines)}")
 
             # Suggest best method
             st.subheader("Suggested Best Method (Based on Adjusted R²)")
             suggestions = []
-            for line_name, x, y in lines:
+            for line_name, x, y, has_duplicates in lines:
                 if len(x) > 1:
                     try:
-                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y)
+                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_duplicates)
                         suggestions.append((line_name, best_method, r2, adj_r2, desc))
                         st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
                     except ValueError as e:
@@ -63,7 +65,7 @@ if uploaded_file:
                 min_points = 3
 
             # Filter lines with enough points
-            filtered_lines = [(name, x, y) for name, x, y in lines if len(x) >= min_points]
+            filtered_lines = [(name, x, y, has_duplicates) for name, x, y, has_duplicates in lines if len(x) >= min_points]
             if len(filtered_lines) < len(lines):
                 st.warning(f"Some lines skipped due to insufficient points for {method} (need at least {min_points}).")
 
@@ -77,8 +79,11 @@ if uploaded_file:
                     "Compound Poly+Log": fit_compound_poly_log,
                     "Spline": fit_spline
                 }
-                for line_name, x, y in filtered_lines:
+                for line_name, x, y, has_duplicates in filtered_lines:
                     try:
+                        if method == "Spline" and has_duplicates:
+                            st.warning(f"Line '{line_name}': Skipped for Spline due to duplicate x values.")
+                            continue
                         fit_func = fit_funcs[method]
                         coeffs, r2, model_desc = fit_func(x, y, **params)
                         if coeffs is not None:
