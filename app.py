@@ -6,7 +6,7 @@
 import streamlit as st
 import pandas as pd
 import io
-from utils import parse_excel, suggest_best_method
+from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline
 from plotting import plot_fit
 
 st.title("Curve Fitting App")
@@ -41,23 +41,22 @@ if uploaded_file:
         suggestions = []
         for line_name, x, y in lines:
             if len(x) > 1:
-                method, coeffs, r2, adj_r2, desc, params = suggest_best_method(x, y)
-                suggestions.append((line_name, method, r2, adj_r2, desc))
-                st.write(f"Line '{line_name}': Best method = {method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
+                best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y)
+                suggestions.append((line_name, best_method, r2, adj_r2, desc))
+                st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
 
         # Choose method
         method = st.selectbox("Choose Fitting Method", ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline"])
 
         params = {}
         if method == "Polynomial":
-            degree = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=2)
-            params['degree'] = degree
-            min_points = degree + 1
+            params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=2)
+            min_points = params['degree'] + 1
         elif method == "Spline":
             params['degree'] = st.number_input("Spline Degree (1-5, 3=cubic)", min_value=1, max_value=5, value=3)
-            min_points = params['degree'] + 1  # Adjust for degree
+            min_points = params['degree'] + 1
         else:
-            min_points = 3  # For most nonlinear
+            min_points = 3
 
         # Filter lines with enough points
         filtered_lines = [(name, x, y) for name, x, y in lines if len(x) >= min_points]
@@ -67,25 +66,30 @@ if uploaded_file:
         if st.button("Fit Curves"):
             results = []
             st.subheader("Fit Results and Graphs")
+            fit_funcs = {
+                "Polynomial": fit_polynomial,
+                "Exponential": fit_exponential,
+                "Logarithmic": fit_logarithmic,
+                "Compound Poly+Log": fit_compound_poly_log,
+                "Spline": fit_spline
+            }
             for line_name, x, y in filtered_lines:
-                coeffs, r2, model_desc = globals()[f"fit_{method.lower().replace(' ', '_').replace('+', '')}"](x, y, **params)  # Dynamic call, but better to import fits
+                fit_func = fit_funcs[method]
+                coeffs, r2, model_desc = fit_func(x, y, **params)
                 if coeffs is not None:
                     result_row = [line_name] + coeffs + [r2]
                     results.append(result_row)
                     st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                    # Plot the fit
                     fig = plot_fit(x, y, coeffs, method, params)
                     st.pyplot(fig)
                 else:
                     st.write(f"Line '{line_name}': {model_desc}")
 
             if results:
-                # Create DataFrame with dynamic columns
-                max_coeffs = max(len(row) - 2 for row in results)  # -2 for name and r2
+                max_coeffs = max(len(row) - 2 for row in results)
                 columns = ['Line Name'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
                 output_df = pd.DataFrame(results, columns=columns)
 
-                # Prepare download
                 output = io.BytesIO()
                 with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
                     output_df.to_excel(writer, index=False, sheet_name='Fits')
@@ -94,7 +98,7 @@ if uploaded_file:
                 st.download_button(
                     label="Download Output Excel",
                     data=output,
-                    file_name=f"{method.lower()}_fits.xlsx",
+                    file_name=f"{method.lower().replace(' ', '_')}_fits.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
             else:
