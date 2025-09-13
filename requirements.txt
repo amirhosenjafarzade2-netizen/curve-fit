@@ -6,4 +6,3 @@ scipy
 xlsxwriter
 matplotlib
 openpyxl
-plotly
