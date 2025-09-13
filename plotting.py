@@ -15,7 +15,7 @@ def plot_fit(x, y, coeffs, method, params):
         y_smooth = poly(x_smooth)
         ax.plot(x_smooth, y_smooth, color='red', label=f'Polynomial (deg {params.get("degree", "?")})')
     elif method == "Exponential":
-        y_smooth = coeffs[0] * np.exp(coffs[1] * x_smooth) + coeffs[2]
+        y_smooth = coeffs[0] * np.exp(coeffs[1] * x_smooth) + coeffs[2]
         ax.plot(x_smooth, y_smooth, color='red', label='Exponential')
     elif method == "Logarithmic":
         y_smooth = coeffs[0] * np.log(x_smooth + 1e-10) + coeffs[1]
