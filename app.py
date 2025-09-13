@@ -15,8 +15,9 @@ st.markdown("""
 ### Instructions
 1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it.
 2. Choose a fitting method (and parameters like degree).
-3. View suggestions for the best overall method based on Adjusted R².
-4. Fit curves, view graphs, and download the output Excel.
+3. Optionally enable averaging of y values for duplicate x values (for spline compatibility).
+4. View suggestions for the best overall method based on Adjusted R².
+5. Fit curves, view graphs, and download the output Excel.
 
 **Output Excel Guide:**
 - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
@@ -24,19 +25,20 @@ st.markdown("""
 - **Exponential**: a, b, c for y = a * exp(b*x) + c.
 - **Logarithmic**: a, b for y = a * log(x) + b.
 - **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c.
-- **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Note: Requires strictly increasing x values.
+- **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Note: Requires strictly increasing x values unless duplicates are averaged.
 """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
+average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines for all lines)", value=True)
 
 if uploaded_file:
     try:
-        lines, skipped_lines = parse_excel(uploaded_file)
+        lines, skipped_lines = parse_excel(uploaded_file, average_duplicates=average_duplicates)
         if not lines:
             st.error("No valid lines found in the file.")
         else:
             st.success(f"Found {len(lines)} valid lines.")
-            if skipped_lines:
+            if skipped_lines and not average_duplicates:
                 st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines): {', '.join(skipped_lines)}")
 
             # Suggest best method
@@ -45,7 +47,7 @@ if uploaded_file:
             for line_name, x, y, has_duplicates in lines:
                 if len(x) > 1:
                     try:
-                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_duplicates)
+                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_duplicates and not average_duplicates)
                         suggestions.append((line_name, best_method, r2, adj_r2, desc))
                         st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
                     except ValueError as e:
@@ -81,7 +83,7 @@ if uploaded_file:
                 }
                 for line_name, x, y, has_duplicates in filtered_lines:
                     try:
-                        if method == "Spline" and has_duplicates:
+                        if method == "Spline" and has_duplicates and not average_duplicates:
                             st.warning(f"Line '{line_name}': Skipped for Spline due to duplicate x values.")
                             continue
                         fit_func = fit_funcs[method]
