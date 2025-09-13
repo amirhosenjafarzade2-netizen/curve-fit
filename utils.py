@@ -20,21 +20,27 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
             line_name = str(df.iloc[row, 0]).strip()
             x_data = []
             y_data = []
+            invalid_x_values = []
             row += 1
             invalid_x = False
             while row < df.shape[0]:
                 if (not pd.isna(df.iloc[row, 0]) and pd.isna(df.iloc[row, 1])) or pd.isna(df.iloc[row, 0]):
                     break
                 if not pd.isna(df.iloc[row, 1]):
-                    x_val = pd.to_numeric(df.iloc[row, 0], errors='coerce')
+                    raw_x = df.iloc[row, 0]
+                    x_val = pd.to_numeric(raw_x, errors='coerce')
                     y_val = pd.to_numeric(df.iloc[row, 1], errors='coerce')
-                    if not pd.isna(x_val) and not pd.isna(y_val):
-                        if x_val <= 0:
-                            invalid_x = True
-                            print(f"Warning: Line '{line_name}' has non-positive x value: {x_val}")
-                        else:
-                            x_data.append(float(x_val))
-                            y_data.append(float(y_val))
+                    if pd.isna(x_val) or pd.isna(y_val):
+                        print(f"Warning: Line '{line_name}' has invalid x or y at row {row+1}: x={raw_x}, y={df.iloc[row, 1]}")
+                        invalid_x_values.append(f"x={raw_x} (parsed as NaN)")
+                        invalid_x = True
+                    elif x_val <= 0:
+                        print(f"Warning: Line '{line_name}' has non-positive x at row {row+1}: x={x_val}")
+                        invalid_x_values.append(f"x={x_val}")
+                        invalid_x = True
+                    else:
+                        x_data.append(float(x_val))
+                        y_data.append(float(y_val))
                 row += 1
             if len(x_data) >= min_points:
                 if average_duplicates:
@@ -54,7 +60,7 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                     print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines.")
                     skipped_lines.append(line_name)
                 if invalid_x:
-                    invalid_x_lines.append(line_name)
+                    invalid_x_lines.append((line_name, invalid_x_values))
                 lines.append((line_name, x_data, y_data, has_duplicates, invalid_x))
             else:
                 print(f"Warning: Line '{line_name}' skipped: only {len(x_data)} valid points (need at least {min_points}).")
