@@ -23,8 +23,8 @@ st.markdown("""
 - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
 - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
 - **Exponential**: a, b, c for y = a * exp(b*x) + c.
-- **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0).
-- **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0).
+- **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
+- **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0; points with x ≤ 0 are ignored).
 - **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
 """)
 
@@ -33,17 +33,17 @@ average_duplicates = st.checkbox("Average y values for duplicate x values (enabl
 
 if uploaded_file:
     try:
-        lines, skipped_lines, invalid_x_lines = parse_excel(uploaded_file, average_duplicates=average_duplicates)
+        lines, skipped_lines = parse_excel(uploaded_file, average_duplicates=average_duplicates)
         if not lines:
             st.error("No valid lines found in the file.")
         else:
             st.success(f"Found {len(lines)} valid lines.")
             if skipped_lines and not average_duplicates:
                 st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines): {', '.join(skipped_lines)}")
-            if invalid_x_lines:
-                st.warning("Lines with non-positive or invalid x values (not suitable for logarithmic or compound fits):")
-                for line_name, invalid_values in invalid_x_lines:
-                    st.warning(f"Line '{line_name}': Invalid x values: {invalid_values}")
+
+            # Display message for logarithmic and compound methods
+            if st.session_state.get('method') in ["Logarithmic", "Compound Poly+Log"]:
+                st.info("Points with x ≤ 0 will be ignored for Logarithmic and Compound Poly+Log methods.")
 
             # Suggest best method
             st.subheader("Suggested Best Method (Based on Adjusted R²)")
@@ -51,14 +51,14 @@ if uploaded_file:
             for line_name, x, y, has_duplicates, has_invalid_x in lines:
                 if len(x) > 1:
                     try:
-                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_duplicates and not average_duplicates, has_invalid_x)
+                        best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_invalid_x)
                         suggestions.append((line_name, best_method, r2, adj_r2, desc))
                         st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
                     except ValueError as e:
                         st.warning(f"Line '{line_name}': Skipped in suggestion due to error: {str(e)}")
 
             # Choose method
-            method = st.selectbox("Choose Fitting Method", ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline"])
+            method = st.selectbox("Choose Fitting Method", ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline"], key="method")
 
             params = {}
             if method == "Polynomial":
@@ -90,15 +90,13 @@ if uploaded_file:
                         if method == "Spline" and has_duplicates and not average_duplicates:
                             st.warning(f"Line '{line_name}': Skipped for Spline due to duplicate x values.")
                             continue
-                        if method in ["Logarithmic", "Compound Poly+Log"] and has_invalid_x:
-                            st.warning(f"Line '{line_name}': Skipped for {method} due to non-positive or invalid x values.")
-                            continue
                         fit_func = fit_funcs[method]
                         coeffs, r2, model_desc = fit_func(x, y, **params)
                         if coeffs is not None:
                             result_row = [line_name] + coeffs + [r2]
                             results.append(result_row)
                             st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
+                            # Use original x, y for plotting to include all points
                             fig = plot_fit(x, y, coeffs, method, params, r2, line_name)
                             st.plotly_chart(fig, use_container_width=True)
                         else:
