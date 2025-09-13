@@ -7,10 +7,6 @@ from scipy.optimize import curve_fit
 from scipy.interpolate import UnivariateSpline
 
 def parse_excel(uploaded_file, min_points=2):
-    """
-    Parse Excel file to extract lines with x,y points.
-    Each line starts with a name in column A (B empty), followed by x in A, y in B.
-    """
     df = pd.read_excel(uploaded_file, header=None)
     lines = []
     row = 0
@@ -37,9 +33,6 @@ def parse_excel(uploaded_file, min_points=2):
     return lines
 
 def suggest_best_poly_degree(x, y, max_degree=10):
-    """
-    Suggest the best polynomial degree based on R².
-    """
     best_degree = 1
     best_r2 = -float('inf')
     n_points = len(x)
@@ -54,6 +47,53 @@ def suggest_best_poly_degree(x, y, max_degree=10):
                 best_r2 = r2
                 best_degree = degree
     return best_degree, best_r2
+
+def calculate_adjusted_r2(r2, n, p):
+    if n > p + 1:
+        return 1 - (1 - r2) * (n - 1) / (n - p - 1)
+    return -float('inf')
+
+def suggest_best_method(x, y, max_poly_degree=10):
+    results = []
+    n = len(x)
+    
+    # Polynomial
+    best_poly_degree, best_poly_r2 = suggest_best_poly_degree(x, y, max_poly_degree)
+    coeffs, r2, desc = fit_polynomial(x, y, degree=best_poly_degree)
+    p = best_poly_degree + 1
+    adj_r2 = calculate_adjusted_r2(r2, n, p)
+    results.append(("Polynomial", coeffs, r2, adj_r2, f"Polynomial (degree {best_poly_degree})", {'degree': best_poly_degree}))
+    
+    # Exponential
+    coeffs, r2, desc = fit_exponential(x, y)
+    if coeffs:
+        p = len(coeffs)
+        adj_r2 = calculate_adjusted_r2(r2, n, p)
+        results.append(("Exponential", coeffs, r2, adj_r2, desc, {}))
+    
+    # Logarithmic
+    coeffs, r2, desc = fit_logarithmic(x, y)
+    if coeffs:
+        p = len(coeffs)
+        adj_r2 = calculate_adjusted_r2(r2, n, p)
+        results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
+    
+    # Compound Poly+Log
+    coeffs, r2, desc = fit_compound_poly_log(x, y)
+    if coeffs:
+        p = len(coeffs)
+        adj_r2 = calculate_adjusted_r2(r2, n, p)
+        results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
+    
+    # Spline (default degree 3)
+    coeffs, r2, desc = fit_spline(x, y, degree=3)
+    p = len(coeffs) // 2  # Approximate parameters
+    adj_r2 = calculate_adjusted_r2(r2, n, p)
+    results.append(("Spline", coeffs, r2, adj_r2, "Cubic Spline: coeffs then knots", {'degree': 3}))
+    
+    # Select best
+    best_result = max(results, key=lambda x: x[3])
+    return best_result
 
 def fit_polynomial(x, y, degree):
     coeffs = np.polyfit(x, y, deg=degree)
@@ -101,4 +141,4 @@ def fit_spline(x, y, degree=3):
     r2 = r2_score(y, y_pred)
     coeffs = spline.get_coeffs().tolist()
     knots = spline.get_knots().tolist()
-    return coeffs + knots, r2, "Cubic Spline: coeffs then knots"
+    return coeffs + knots, r2, f"Spline (degree {degree}): coeffs then knots"
