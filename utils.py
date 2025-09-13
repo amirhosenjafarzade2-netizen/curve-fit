@@ -6,7 +6,7 @@ from sklearn.metrics import r2_score
 from scipy.optimize import curve_fit
 from scipy.interpolate import UnivariateSpline
 
-def parse_excel(uploaded_file, min_points=2):
+def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
     try:
         df = pd.read_excel(uploaded_file, header=None, engine='openpyxl')
     except Exception as e:
@@ -31,13 +31,20 @@ def parse_excel(uploaded_file, min_points=2):
                         y_data.append(float(y_val))
                 row += 1
             if len(x_data) >= min_points:
-                # Sort by x to ensure ascending order
+                if average_duplicates:
+                    # Aggregate duplicates by averaging y values
+                    df_temp = pd.DataFrame({'x': x_data, 'y': y_data})
+                    df_temp = df_temp.groupby('x', as_index=False).mean()
+                    x_data = df_temp['x'].to_numpy()
+                    y_data = df_temp['y'].to_numpy()
+                    has_duplicates = len(x_data) != len(np.unique(x_data))
+                else:
+                    has_duplicates = len(np.unique(x_data)) != len(x_data)
+                # Sort by x
                 x_data, y_data = zip(*sorted(zip(x_data, y_data)))
                 x_data = np.array(x_data)
                 y_data = np.array(y_data)
-                # Check for duplicates
-                has_duplicates = len(np.unique(x_data)) != len(x_data)
-                if has_duplicates:
+                if has_duplicates and not average_duplicates:
                     print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines.")
                     skipped_lines.append(line_name)
                 lines.append((line_name, x_data, y_data, has_duplicates))
@@ -112,8 +119,8 @@ def suggest_best_method(x, y, has_duplicates, max_poly_degree=10):
     except Exception as e:
         print(f"Compound Poly+Log suggestion failed: {str(e)}")
     
-    # Spline (default degree 3, skip if duplicates)
-    if not has_duplicates:
+    # Spline (default degree 3, skip if duplicates and not averaged)
+    if not (has_duplicates and not average_duplicates):
         try:
             coeffs, r2, desc = fit_spline(x, y, degree=3)
             p = len(coeffs) // 2
