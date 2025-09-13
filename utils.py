@@ -7,7 +7,10 @@ from scipy.optimize import curve_fit
 from scipy.interpolate import UnivariateSpline
 
 def parse_excel(uploaded_file, min_points=2):
-    df = pd.read_excel(uploaded_file, header=None)
+    try:
+        df = pd.read_excel(uploaded_file, header=None, engine='openpyxl')
+    except Exception as e:
+        raise ValueError(f"Failed to read Excel file: {str(e)}")
     lines = []
     row = 0
     while row < df.shape[0]:
@@ -27,7 +30,15 @@ def parse_excel(uploaded_file, min_points=2):
                         y_data.append(float(y_val))
                 row += 1
             if len(x_data) >= min_points:
-                lines.append((line_name, np.array(x_data), np.array(y_data)))
+                # Sort by x to ensure strictly increasing for splines
+                x_data, y_data = zip(*sorted(zip(x_data, y_data)))
+                x_data = np.array(x_data)
+                y_data = np.array(y_data)
+                # Check for duplicates
+                if len(np.unique(x_data)) == len(x_data):
+                    lines.append((line_name, x_data, y_data))
+                else:
+                    print(f"Warning: Line '{line_name}' has duplicate x values, skipped for spline compatibility.")
         else:
             row += 1
     return lines
@@ -58,41 +69,59 @@ def suggest_best_method(x, y, max_poly_degree=10):
     n = len(x)
     
     # Polynomial
-    best_poly_degree, best_poly_r2 = suggest_best_poly_degree(x, y, max_poly_degree)
-    coeffs, r2, desc = fit_polynomial(x, y, degree=best_poly_degree)
-    p = best_poly_degree + 1
-    adj_r2 = calculate_adjusted_r2(r2, n, p)
-    results.append(("Polynomial", coeffs, r2, adj_r2, f"Polynomial (degree {best_poly_degree})", {'degree': best_poly_degree}))
+    try:
+        best_poly_degree, best_poly_r2 = suggest_best_poly_degree(x, y, max_poly_degree)
+        coeffs, r2, desc = fit_polynomial(x, y, degree=best_poly_degree)
+        p = best_poly_degree + 1
+        adj_r2 = calculate_adjusted_r2(r2, n, p)
+        results.append(("Polynomial", coeffs, r2, adj_r2, f"Polynomial (degree {best_poly_degree})", {'degree': best_poly_degree}))
+    except Exception as e:
+        print(f"Polynomial suggestion failed: {str(e)}")
     
     # Exponential
-    coeffs, r2, desc = fit_exponential(x, y)
-    if coeffs:
-        p = len(coeffs)
-        adj_r2 = calculate_adjusted_r2(r2, n, p)
-        results.append(("Exponential", coeffs, r2, adj_r2, desc, {}))
+    try:
+        coeffs, r2, desc = fit_exponential(x, y)
+        if coeffs:
+            p = len(coeffs)
+            adj_r2 = calculate_adjusted_r2(r2, n, p)
+            results.append(("Exponential", coeffs, r2, adj_r2, desc, {}))
+    except Exception as e:
+        print(f"Exponential suggestion failed: {str(e)}")
     
     # Logarithmic
-    coeffs, r2, desc = fit_logarithmic(x, y)
-    if coeffs:
-        p = len(coeffs)
-        adj_r2 = calculate_adjusted_r2(r2, n, p)
-        results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
+    try:
+        coeffs, r2, desc = fit_logarithmic(x, y)
+        if coeffs:
+            p = len(coeffs)
+            adj_r2 = calculate_adjusted_r2(r2, n, p)
+            results.append(("Logarithmic", coeffs, r2, adj_r2, desc, {}))
+    except Exception as e:
+        print(f"Logarithmic suggestion failed: {str(e)}")
     
     # Compound Poly+Log
-    coeffs, r2, desc = fit_compound_poly_log(x, y)
-    if coeffs:
-        p = len(coeffs)
-        adj_r2 = calculate_adjusted_r2(r2, n, p)
-        results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
+    try:
+        coeffs, r2, desc = fit_compound_poly_log(x, y)
+        if coeffs:
+            p = len(coeffs)
+            adj_r2 = calculate_adjusted_r2(r2, n, p)
+            results.append(("Compound Poly+Log", coeffs, r2, adj_r2, desc, {}))
+    except Exception as e:
+        print(f"Compound Poly+Log suggestion failed: {str(e)}")
     
     # Spline (default degree 3)
-    coeffs, r2, desc = fit_spline(x, y, degree=3)
-    p = len(coeffs) // 2  # Approximate parameters
-    adj_r2 = calculate_adjusted_r2(r2, n, p)
-    results.append(("Spline", coeffs, r2, adj_r2, "Cubic Spline: coeffs then knots", {'degree': 3}))
+    try:
+        coeffs, r2, desc = fit_spline(x, y, degree=3)
+        p = len(coeffs) // 2  # Approximate
+        adj_r2 = calculate_adjusted_r2(r2, n, p)
+        results.append(("Spline", coeffs, r2, adj_r2, "Cubic Spline: coeffs then knots", {'degree': 3}))
+    except ValueError as e:
+        print(f"Spline suggestion failed: {str(e)}")
     
-    # Select best
-    best_result = max(results, key=lambda x: x[3])
+    # Select best or default to Polynomial if all fail
+    if results:
+        best_result = max(results, key=lambda x: x[3])
+    else:
+        best_result = ("Polynomial", None, 0, -float('inf'), "Polynomial failed", {'degree': 1})
     return best_result
 
 def fit_polynomial(x, y, degree):
@@ -117,6 +146,8 @@ def fit_logarithmic(x, y):
     def log_model(x, a, b):
         return a * np.log(x + 1e-10) + b
     try:
+        if np.any(x <= 0):
+            return None, None, "Logarithmic fit failed: x values must be positive"
         popt, _ = curve_fit(log_model, x, y, p0=[1, 1])
         y_pred = log_model(x, *popt)
         r2 = r2_score(y, y_pred)
@@ -128,6 +159,8 @@ def fit_compound_poly_log(x, y):
     def poly_log_model(x, a, b, c):
         return a * x**2 + b * np.log(x + 1e-10) + c
     try:
+        if np.any(x <= 0):
+            return None, None, "Compound Poly+Log fit failed: x values must be positive"
         popt, _ = curve_fit(poly_log_model, x, y, p0=[1, 1, 1])
         y_pred = poly_log_model(x, *popt)
         r2 = r2_score(y, y_pred)
@@ -136,9 +169,12 @@ def fit_compound_poly_log(x, y):
         return None, None, "Compound fit failed"
 
 def fit_spline(x, y, degree=3):
-    spline = UnivariateSpline(x, y, k=degree, s=0)
-    y_pred = spline(x)
-    r2 = r2_score(y, y_pred)
-    coeffs = spline.get_coeffs().tolist()
-    knots = spline.get_knots().tolist()
-    return coeffs + knots, r2, f"Spline (degree {degree}): coeffs then knots"
+    try:
+        spline = UnivariateSpline(x, y, k=degree, s=0)
+        y_pred = spline(x)
+        r2 = r2_score(y, y_pred)
+        coeffs = spline.get_coeffs().tolist()
+        knots = spline.get_knots().tolist()
+        return coeffs + knots, r2, f"Spline (degree {degree}): coeffs then knots"
+    except ValueError as e:
+        return None, None, f"Spline fit failed: {str(e)}"
