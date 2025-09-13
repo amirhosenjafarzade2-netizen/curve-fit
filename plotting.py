@@ -4,20 +4,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import UnivariateSpline
 
-def plot_fit(x, y, coeffs, method, degree=3):
-    """
-    Plot data points and fitted curve for the given method.
-    """
+def plot_fit(x, y, coeffs, method, params):
     fig, ax = plt.subplots()
     ax.scatter(x, y, color='blue', label='Data Points', s=50)
 
-    # Generate smooth x values for plotting the curve
     x_smooth = np.linspace(min(x), max(x), 200)
 
     if method == "Polynomial":
         poly = np.poly1d(coeffs)
         y_smooth = poly(x_smooth)
-        ax.plot(x_smooth, y_smooth, color='red', label=f'Polynomial (deg {degree})')
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Polynomial (deg {params.get("degree", "?")})')
     elif method == "Exponential":
         y_smooth = coeffs[0] * np.exp(coeffs[1] * x_smooth) + coeffs[2]
         ax.plot(x_smooth, y_smooth, color='red', label='Exponential')
@@ -28,10 +24,10 @@ def plot_fit(x, y, coeffs, method, degree=3):
         y_smooth = coeffs[0] * x_smooth**2 + coeffs[1] * np.log(x_smooth + 1e-10) + coeffs[2]
         ax.plot(x_smooth, y_smooth, color='red', label='Poly+Log')
     elif method == "Spline":
-        n_coeffs = len(coeffs) // 2  # Approx split between coeffs and knots
+        degree = params.get('degree', 3)
         spline = UnivariateSpline(x, y, k=degree, s=0)
         y_smooth = spline(x_smooth)
-        ax.plot(x_smooth, y_smooth, color='red', label='Cubic Spline')
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Spline (deg {degree})')
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
