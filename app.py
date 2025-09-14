@@ -13,7 +13,7 @@ st.title("Curve Fitting App")
 
 st.markdown("""
 ### Instructions
-1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it.
+1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row)
 2. Choose a fitting method (and parameters like degree).
 3. Optionally enable averaging of y values for duplicate x values (for spline compatibility).
 4. View suggestions for the best overall method based on Adjusted R².
