@@ -12,12 +12,40 @@ from plotting import plot_fit
 from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
 from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
 
+# Custom CSS for better button styling
+st.markdown("""
+<style>
+.stButton > button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 8px 16px;
+    margin: 5px;
+    font-size: 14px;
+    font-weight: 500;
+    transition: background-color 0.3s;
+}
+.stButton > button:hover {
+    background-color: #45a049;
+}
+.stButton > button:focus {
+    outline: none;
+    box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
+}
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Curve Fitting App")
 
-# Buttons to toggle optional instruction sections
-show_general_instructions = st.button("Show General Instructions")
-show_excel_format = st.button("Show Excel Format Guide")
-show_formulas = st.button("Show Curve Fit Formulas")
+# Horizontal layout for instruction buttons
+col1, col2, col3 = st.columns(3)
+with col1:
+    show_general_instructions = st.button("General Instructions")
+with col2:
+    show_excel_format = st.button("Excel Format Guide")
+with col3:
+    show_formulas = st.button("Curve Fit Formulas")
 
 # General Instructions (collapsible)
 if show_general_instructions:
@@ -69,7 +97,7 @@ if uploaded_file:
         else:
             st.success(f"Found {len(lines)} valid lines.")
             if skipped_lines and not average_duplicates:
-                st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
+                st.warning(f"Skipped COUNCIL_OF_MINISTERS_001 {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
 
             # Option to show suggested best method
             show_suggestions = st.radio("Show suggested best method for each line?", ["No", "Yes"], index=0)
