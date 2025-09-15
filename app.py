@@ -47,7 +47,8 @@ st.markdown("""
 
 st.title("Curve Fitting App")
 
-# Horizontal layout for instruction buttons
+# Two rows for instruction buttons
+# Top row: General Instructions, Excel Format Guide, Curve Fit Formulas
 col1, col2, col3 = st.columns(3)
 with col1:
     show_general_instructions = st.button("General Instructions")
@@ -55,6 +56,13 @@ with col2:
     show_excel_format = st.button("Excel Format Guide")
 with col3:
     show_formulas = st.button("Curve Fit Formulas")
+
+# Bottom row: Constrained Optimization, Outlier Detection and Cleaning
+col4, col5, _ = st.columns([1, 1, 1])  # Third column empty for alignment
+with col4:
+    show_constrained_optimization = st.button("Constrained Optimization Guide")
+with col5:
+    show_outlier_cleaning = st.button("Outlier Detection Guide")
 
 # General Instructions (collapsible)
 if show_general_instructions:
@@ -81,12 +89,11 @@ if show_excel_format:
         </div>
         """, unsafe_allow_html=True)
 
-# Curve Fit Formulas and Mode Guides (collapsible)
+# Curve Fit Formulas (collapsible)
 if show_formulas:
-    with st.expander("Curve Fit Formulas and Mode Guides", expanded=True):
+    with st.expander("Curve Fit Formulas", expanded=True):
         st.markdown("""
         <div class="green-rectangle">
-        ### Fitting Methods
         - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
         - **Exponential**: a, b, c for y = a * exp(b*x) + c.
         - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
@@ -99,14 +106,24 @@ if show_formulas:
         - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
         - **Random Forest**: n_estimators (number of trees).
         </div>
+        """, unsafe_allow_html=True)
+
+# Constrained Optimization Guide (collapsible)
+if show_constrained_optimization:
+    with st.expander("Constrained Optimization Guide", expanded=True):
+        st.markdown("""
         <div class="green-rectangle">
-        ### Constrained Optimization Mode
         - **Purpose**: Fits curves (e.g., Polynomial) with coefficients optimized to pass through user-specified points (x, y).
         - **Parameters**: Select method (e.g., Polynomial), degree, number of restrictive points, and their (x, y) coordinates. Regularization strength (lambda) to preserve curve trajectory.
         - **Output**: Excel with line name, model description, optimized coefficients, and R².
         </div>
+        """, unsafe_allow_html=True)
+
+# Outlier Detection and Cleaning Guide (collapsible)
+if show_outlier_cleaning:
+    with st.expander("Outlier Detection and Cleaning Guide", expanded=True):
+        st.markdown("""
         <div class="green-rectangle">
-        ### Outlier Detection and Cleaning Mode
         - **Purpose**: Detects and removes outliers using Z-score, IQR, Isolation Forest, or a fixed number, then fits curves to cleaned data.
         - **Parameters**:
           - **Z-score**: Threshold (e.g., 3.0) for absolute Z-score.
