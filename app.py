@@ -16,10 +16,11 @@ st.markdown("""
 ### Instructions
 1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it 
 (next line after an empty row, similarly)
-2. Choose a fitting method (and parameters like degree).
-3. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
-4. View suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
-5. Fit curves, view graphs, and download the output Excel.
+2. Choose a mode: Standard (single method with parameters) or Visual Comparison (compare all methods).
+3. For Standard mode, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
+4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
+5. View suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
+6. Fit curves, view graphs, and download the output Excel.
 
 **Output Excel Guide:**
 - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
@@ -165,7 +166,7 @@ if uploaded_file:
                 comparison_type = st.radio("Compare", ["All lines", "Random n lines"])
                 if comparison_type == "Random n lines":
                     n = st.number_input("Number of random lines", min_value=1, max_value=len(lines), value=min(5, len(lines)))
-                    selected_lines = random.sample(lines, n)
+                    selected_lines = random.sample(lines, min(n, len(lines)))
                 else:
                     selected_lines = lines
 
@@ -199,9 +200,11 @@ if uploaded_file:
                     "Wavelet Denoising": fit_wavelet_denoising
                 }
 
-                if st.button("Generate Visual Comparisons"):
+                if st.button("Compare All Methods"):
+                    results = []
+                    st.subheader("Visual Comparison Results")
                     for line_name, x, y, has_duplicates, has_invalid_x in selected_lines:
-                        st.subheader(f"Visual Comparison for Line: {line_name}")
+                        st.markdown(f"### Line: {line_name}")
                         if len(x) < 3:
                             st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 3).")
                             continue
@@ -223,6 +226,9 @@ if uploaded_file:
                                 fit_func = fit_funcs[method]
                                 coeffs, r2, model_desc = fit_func(x, y, **params)
                                 if coeffs is not None:
+                                    # Store results with method name for Excel output
+                                    result_row = [line_name, model_desc] + coeffs + [r2]
+                                    results.append(result_row)
                                     st.write(f"{model_desc}, R² = {r2:.4f}")
                                     fig = plot_fit(x, y, coeffs, method, params)
                                     st.pyplot(fig)
@@ -230,6 +236,26 @@ if uploaded_file:
                                     st.warning(f"Line '{line_name}' - {method}: {model_desc}")
                             except ValueError as e:
                                 st.warning(f"Line '{line_name}' - {method}: Failed to fit: {str(e)}")
+
+                    if results:
+                        # Create DataFrame with method description included
+                        max_coeffs = max(len(row) - 3 for row in results)  # Subtract line_name, model_desc, r2
+                        columns = ['Line Name', 'Method'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
+                        output_df = pd.DataFrame(results, columns=columns)
+
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            output_df.to_excel(writer, index=False, sheet_name='Comparison_Fits')
+                        output.seek(0)
+
+                        st.download_button(
+                            label="Download Comparison Excel",
+                            data=output,
+                            file_name="comparison_fits.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.error("No fits could be performed in Visual Comparison mode.")
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
