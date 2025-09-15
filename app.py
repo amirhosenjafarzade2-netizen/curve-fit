@@ -11,8 +11,10 @@ from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponent
 from plotting import plot_fit
 from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
 from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
+from constrained_optimization import constrained_optimization_ui, optimize_coefficients, plot_constrained_fit, create_constrained_excel
+from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
 
-# Custom CSS for better button styling
+# Custom CSS for button styling
 st.markdown("""
 <style>
 .stButton > button {
@@ -52,27 +54,27 @@ if show_general_instructions:
     with st.expander("General Instructions", expanded=True):
         st.markdown("""
         1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
-        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), or Download Smoothed Data (generate smoothed curves in Excel format).
-        3. For Curve Fit mode, select a fitting method and parameters. For Visual Comparison with Graphs, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
-        4. For Download Smoothed Data, select a fitting method, parameters, and number of smoothed points, then download the Excel.
-        5. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
-        6. Optionally view suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
-        7. Fit curves, view graphs, or download the output Excel.
+        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), Constrained Optimization (fit with restrictive points), or Outlier Detection and Cleaning (remove outliers and fit).
+        3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Constrained Optimization, specify restrictive points. For Outlier Detection, choose an outlier detection method or number of outliers.
+        4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods).
+        5. Optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
+        6. Fit curves, view graphs, or download the output Excel.
         """)
 
 # Excel Format Guide (collapsible)
 if show_excel_format:
     with st.expander("Excel Output Format Guide", expanded=True):
         st.markdown("""
-        **Output Excel Guide (Curve Fit and Visual Comparison):**
+        **Output Excel Guide (Curve Fit, Visual Comparison, Constrained Optimization):**
         - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
-        - **Smoothed Data Excel Format (Download Smoothed Data)**: Similar to input: Line name in column A (B empty), then smoothed x in A, y in B below it, empty row, next line, etc.
+        - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
         """)
 
-# Curve Fit Formulas (collapsible)
+# Curve Fit Formulas and Mode Guides (collapsible)
 if show_formulas:
-    with st.expander("Curve Fit Formulas", expanded=True):
+    with st.expander("Curve Fit Formulas and Mode Guides", expanded=True):
         st.markdown("""
+        ### Fitting Methods
         - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
         - **Exponential**: a, b, c for y = a * exp(b*x) + c.
         - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
@@ -84,6 +86,21 @@ if show_formulas:
         - **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
         - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
         - **Random Forest**: n_estimators (number of trees).
+
+        ### Constrained Optimization Mode
+        - **Purpose**: Fits curves (e.g., Polynomial) with coefficients optimized to pass through user-specified points (x, y).
+        - **Parameters**: Select method (e.g., Polynomial), degree, number of restrictive points, and their (x, y) coordinates. Regularization strength (lambda) to preserve curve trajectory.
+        - **Output**: Excel with line name, model description, optimized coefficients, and R².
+
+        ### Outlier Detection and Cleaning Mode
+        - **Purpose**: Detects and removes outliers using Z-score, IQR, Isolation Forest, or a fixed number, then fits curves to cleaned data.
+        - **Parameters**:
+          - **Z-score**: Threshold (e.g., 3.0) for absolute Z-score.
+          - **IQR**: Multiplier (e.g., 1.5) for interquartile range bounds.
+          - **Isolation Forest**: Contamination (proportion of outliers, e.g., 0.1).
+          - **Fixed Number**: Number of outliers to remove (based on residuals from preliminary fit).
+          - Select fitting method and parameters for cleaned data.
+        - **Output**: Excel with cleaned data (line name in A, B empty, x in A, y in B, empty rows).
         """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
@@ -97,13 +114,14 @@ if uploaded_file:
         else:
             st.success(f"Found {len(lines)} valid lines.")
             if skipped_lines and not average_duplicates:
-                st.warning(f"Skipped COUNCIL_OF_MINISTERS_001 {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
+                st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
 
             # Option to show suggested best method
             show_suggestions = st.radio("Show suggested best method for each line?", ["No", "Yes"], index=0)
 
             # Mode selection
-            mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data"])
+            mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data", 
+                                            "Constrained Optimization", "Outlier Detection and Cleaning"])
 
             # Define fit and plot functions for reuse
             fit_funcs = {
@@ -343,6 +361,126 @@ if uploaded_file:
                         file_name=f"{method.lower().replace(' ', '_')}_smoothed_data.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
+
+            elif mode == "Constrained Optimization":
+                st.subheader("Constrained Optimization")
+                st.markdown("Select a fitting method and specify restrictive points that the curve must pass through. The coefficients will be optimized to minimize MSE while satisfying the constraints.")
+
+                # Get parameters and constraints
+                params = constrained_optimization_ui()
+                method = params.pop('method')
+
+                if st.button("Optimize Coefficients"):
+                    results = []
+                    st.subheader("Optimization Results and Graphs")
+                    for line_name, x, y, has_duplicates, has_invalid_x in lines:
+                        try:
+                            coeffs, r2, model_desc = optimize_coefficients(x, y, method, params)
+                            if coeffs is not None:
+                                result_row = [line_name, model_desc] + coeffs + [r2]
+                                results.append((line_name, coeffs, r2, model_desc))
+                                st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
+                                fig = plot_constrained_fit(x, y, coeffs, method, params)
+                                st.pyplot(fig)
+                            else:
+                                st.warning(f"Line '{line_name}': {model_desc}")
+                        except ValueError as e:
+                            st.warning(f"Line '{line_name}': Failed to optimize {method}: {str(e)}")
+
+                    if results:
+                        output = create_constrained_excel(results)
+                        st.download_button(
+                            label="Download Optimized Coefficients Excel",
+                            data=output,
+                            file_name="constrained_optimization_fits.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.error("No optimizations could be performed.")
+
+            elif mode == "Outlier Detection and Cleaning":
+                st.subheader("Outlier Detection and Cleaning")
+                st.markdown("Select an outlier detection method or specify the number of outliers to remove, then fit curves to the cleaned data.")
+
+                # Get parameters
+                params = outlier_cleaner_ui()
+                method = params.pop('fit_method')
+                detection_method = params['detection_method']
+                min_points = 3
+                if method == "Polynomial":
+                    min_points = params.get('degree', 2) + 1
+                elif method == "Spline":
+                    min_points = params.get('degree', 3) + 1
+                elif method == "Savitzky-Golay":
+                    min_points = params.get('window', 5)
+
+                # Filter lines with enough points
+                filtered_lines = [(name, x, y, has_duplicates, has_invalid_x) for name, x, y, has_duplicates, has_invalid_x in lines if len(x) >= min_points]
+                if len(filtered_lines) < len(lines):
+                    st.warning(f"Some lines skipped due to insufficient points for {method} (need at least {min_points}).")
+
+                if st.button("Detect Outliers and Fit"):
+                    cleaned_results = []
+                    fit_results = []
+                    st.subheader("Outlier Detection and Fit Results")
+                    for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
+                        try:
+                            # Detect outliers
+                            if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
+                                st.warning(f"Line '{line_name}': Skipped for {method} due to duplicate x values.")
+                                cleaned_results.append((line_name, None, None, f"Skipped due to duplicate x values for {method}"))
+                                continue
+                            fit_func = fit_funcs[method]
+                            mask, outlier_indices = detect_outliers(x, y, detection_method, params, fit_func if detection_method == "Fixed Number" else None)
+                            if mask is None:
+                                st.warning(f"Line '{line_name}': {outlier_indices}")
+                                cleaned_results.append((line_name, None, None, outlier_indices))
+                                continue
+                            x_clean = x[mask]
+                            y_clean = y[mask]
+                            cleaned_results.append((line_name, x_clean, y_clean, None))
+                            st.write(f"Line '{line_name}': Removed {len(outlier_indices)} outliers")
+
+                            # Fit on cleaned data
+                            if len(x_clean) >= min_points:
+                                coeffs, r2, model_desc = fit_func(x_clean, y_clean, **{k: v for k, v in params.items() if k not in ['detection_method', 'fit_method']})
+                                if coeffs is not None:
+                                    fit_results.append((line_name, coeffs, r2, model_desc))
+                                    st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
+                                    fig = plot_cleaned_data(x, y, mask, coeffs, method, params)
+                                    st.pyplot(fig)
+                                else:
+                                    st.warning(f"Line '{line_name}': Failed to fit {method} on cleaned data")
+                            else:
+                                st.warning(f"Line '{line_name}': Not enough points after outlier removal (need {min_points})")
+                        except Exception as e:
+                            st.warning(f"Line '{line_name}': Failed to process: {str(e)}")
+                            cleaned_results.append((line_name, None, None, str(e)))
+
+                    if cleaned_results:
+                        output = create_cleaned_excel(cleaned_results)
+                        st.download_button(
+                            label="Download Cleaned Data Excel",
+                            data=output,
+                            file_name="cleaned_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    if fit_results:
+                        max_coeffs = max(len(row[1]) for row in fit_results if row[1] is not None)
+                        columns = ['Line Name', 'Model Desc'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
+                        output_df = pd.DataFrame([[r[0], r[3]] + r[1] + [r[2]] for r in fit_results], columns=columns)
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            output_df.to_excel(writer, index=False, sheet_name='Cleaned_Fits')
+                        output.seek(0)
+                        st.download_button(
+                            label="Download Cleaned Fits Excel",
+                            data=output,
+                            file_name="cleaned_fits.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    if not cleaned_results and not fit_results:
+                        st.error("No data could be processed.")
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
