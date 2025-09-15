@@ -229,7 +229,7 @@ if uploaded_file:
                     "LOWESS": plot_fit,
                     "Exponential Smoothing": plot_fit,
                     "Gaussian Smoothing": plot_fit,
-                    "Wavelet Denoising": plot_fit,
+                    "Wavelet واDenoising": plot_fit,
                     "Random Forest": plot_random_forest
                 }
 
@@ -292,4 +292,3 @@ if uploaded_file:
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
-```
