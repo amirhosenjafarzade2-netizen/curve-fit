@@ -1,3 +1,4 @@
+```python
 # app.py - Main Streamlit app for curve fitting
 # Run with: streamlit run app.py
 # Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl, statsmodels, pywavelets
@@ -9,6 +10,7 @@ import io
 import random
 from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline, fit_savgol, fit_lowess, fit_exponential_smoothing, fit_gaussian_smoothing, fit_wavelet_denoising
 from plotting import plot_fit
+from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
 
 st.title("Curve Fitting App")
 
@@ -34,6 +36,7 @@ st.markdown("""
 - **Exponential Smoothing**: alpha. Requires strictly increasing x values unless duplicates are averaged.
 - **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
 - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
+- **Random Forest**: n_estimators (number of trees).
 """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
@@ -72,7 +75,7 @@ if uploaded_file:
 
                 # Choose method
                 method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
-                                  "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"]
+                                  "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising", "Random Forest"]
                 method = st.selectbox("Choose Fitting Method", method_options, key="method")
 
                 params = {}
@@ -97,7 +100,8 @@ if uploaded_file:
                     params['wavelet'] = st.selectbox("Wavelet family", options=['db4', 'haar', 'sym4', 'coif1'], index=0)
                     params['level'] = st.number_input("Decomposition level", min_value=1, max_value=5, value=1)
                     params['threshold'] = st.slider("Threshold factor", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
-                else:
+                elif method == "Random Forest":
+                    params = random_forest_ui()
                     min_points = 3
 
                 # Filter lines with enough points
@@ -118,7 +122,21 @@ if uploaded_file:
                         "LOWESS": fit_lowess,
                         "Exponential Smoothing": fit_exponential_smoothing,
                         "Gaussian Smoothing": fit_gaussian_smoothing,
-                        "Wavelet Denoising": fit_wavelet_denoising
+                        "Wavelet Denoising": fit_wavelet_denoising,
+                        "Random Forest": fit_random_forest
+                    }
+                    plot_funcs = {
+                        "Polynomial": plot_fit,
+                        "Exponential": plot_fit,
+                        "Logarithmic": plot_fit,
+                        "Compound Poly+Log": plot_fit,
+                        "Spline": plot_fit,
+                        "Savitzky-Golay": plot_fit,
+                        "LOWESS": plot_fit,
+                        "Exponential Smoothing": plot_fit,
+                        "Gaussian Smoothing": plot_fit,
+                        "Wavelet Denoising": plot_fit,
+                        "Random Forest": plot_random_forest
                     }
                     for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
                         try:
@@ -132,7 +150,8 @@ if uploaded_file:
                                 results.append(result_row)
                                 st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
                                 # Use original x, y for plotting to include all points
-                                fig = plot_fit(x, y, coeffs, method, params)
+                                plot_func = plot_funcs[method]
+                                fig = plot_func(x, y, coeffs, method, params)
                                 st.pyplot(fig)
                             else:
                                 st.warning(f"Line '{line_name}': {model_desc}")
@@ -183,10 +202,11 @@ if uploaded_file:
                     ("LOWESS", {"frac": 0.3}),
                     ("Exponential Smoothing", {"alpha": 0.5}),
                     ("Gaussian Smoothing", {"sigma": 1.0}),
-                    ("Wavelet Denoising", {"wavelet": "db4", "level": 1, "threshold": 0.1})
+                    ("Wavelet Denoising", {"wavelet": "db4", "level": 1, "threshold": 0.1}),
+                    ("Random Forest", {"n_estimators": 100})
                 ])
 
-                # Fit functions map
+                # Fit and plot functions map
                 fit_funcs = {
                     "Polynomial": fit_polynomial,
                     "Exponential": fit_exponential,
@@ -197,7 +217,21 @@ if uploaded_file:
                     "LOWESS": fit_lowess,
                     "Exponential Smoothing": fit_exponential_smoothing,
                     "Gaussian Smoothing": fit_gaussian_smoothing,
-                    "Wavelet Denoising": fit_wavelet_denoising
+                    "Wavelet Denoising": fit_wavelet_denoising,
+                    "Random Forest": fit_random_forest
+                }
+                plot_funcs = {
+                    "Polynomial": plot_fit,
+                    "Exponential": plot_fit,
+                    "Logarithmic": plot_fit,
+                    "Compound Poly+Log": plot_fit,
+                    "Spline": plot_fit,
+                    "Savitzky-Golay": plot_fit,
+                    "LOWESS": plot_fit,
+                    "Exponential Smoothing": plot_fit,
+                    "Gaussian Smoothing": plot_fit,
+                    "Wavelet Denoising": plot_fit,
+                    "Random Forest": plot_random_forest
                 }
 
                 if st.button("Compare All Methods"):
@@ -226,11 +260,11 @@ if uploaded_file:
                                 fit_func = fit_funcs[method]
                                 coeffs, r2, model_desc = fit_func(x, y, **params)
                                 if coeffs is not None:
-                                    # Store results with method name for Excel output
                                     result_row = [line_name, model_desc] + coeffs + [r2]
                                     results.append(result_row)
                                     st.write(f"{model_desc}, R² = {r2:.4f}")
-                                    fig = plot_fit(x, y, coeffs, method, params)
+                                    plot_func = plot_funcs[method]
+                                    fig = plot_func(x, y, coeffs, method, params)
                                     st.pyplot(fig)
                                 else:
                                     st.warning(f"Line '{line_name}' - {method}: {model_desc}")
@@ -259,3 +293,4 @@ if uploaded_file:
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
+```
