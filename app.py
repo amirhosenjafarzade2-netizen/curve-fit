@@ -10,33 +10,51 @@ import random
 from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline, fit_savgol, fit_lowess, fit_exponential_smoothing, fit_gaussian_smoothing, fit_wavelet_denoising
 from plotting import plot_fit
 from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
+from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
 
 st.title("Curve Fitting App")
 
 st.markdown("""
 ### Instructions
 1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it 
-(next line after an empty row, similarly)
-2. Choose a mode: Standard (single method with parameters) or Visual Comparison (compare all methods).
-3. For Standard mode, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
-4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
-5. Optionally view suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
-6. Fit curves, view graphs, and download the output Excel.
-
-**Output Excel Guide:**
-- **Columns**: 'Line Name', then coefficients/parameters, followed by R².
-- **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
-- **Exponential**: a, b, c for y = a * exp(b*x) + c.
-- **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
-- **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0; points with x ≤ 0 are ignored).
-- **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
-- **Savitzky-Golay**: window_length, polyorder. Requires strictly increasing x values unless duplicates are averaged.
-- **LOWESS**: frac. Requires strictly increasing x values unless duplicates are averaged.
-- **Exponential Smoothing**: alpha. Requires strictly increasing x values unless duplicates are averaged.
-- **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
-- **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
-- **Random Forest**: n_estimators (number of trees).
+(next line after an empty row, similarly).
+2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), or Download Smoothed Data (generate smoothed curves in Excel format).
+3. For Curve Fit mode, select a fitting method and parameters. For Visual Comparison with Graphs, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
+4. For Download Smoothed Data, select a fitting method, parameters, and number of smoothed points, then download the Excel.
+5. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
+6. Optionally view suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
+7. Fit curves, view graphs, or download the output Excel.
 """)
+
+# Buttons to toggle optional sections
+show_excel_format = st.button("Show Excel Format Guide")
+show_formulas = st.button("Show Curve Fit Formulas")
+
+# Excel Format Guide (collapsible)
+if show_excel_format:
+    with st.expander("Excel Output Format Guide", expanded=True):
+        st.markdown("""
+        **Output Excel Guide (Curve Fit and Visual Comparison):**
+        - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
+        - **Smoothed Data Excel Format (Download Smoothed Data)**: Similar to input: Line name in column A (B empty), then smoothed x in A, y in B below it, empty row, next line, etc.
+        """)
+
+# Curve Fit Formulas (collapsible)
+if show_formulas:
+    with st.expander("Curve Fit Formulas", expanded=True):
+        st.markdown("""
+        - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
+        - **Exponential**: a, b, c for y = a * exp(b*x) + c.
+        - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
+        - **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0; points with x ≤ 0 are ignored).
+        - **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
+        - **Savitzky-Golay**: window_length, polyorder. Requires strictly increasing x values unless duplicates are averaged.
+        - **LOWESS**: frac. Requires strictly increasing x values unless duplicates are averaged.
+        - **Exponential Smoothing**: alpha. Requires strictly increasing x values unless duplicates are averaged.
+        - **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
+        - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
+        - **Random Forest**: n_estimators (number of trees).
+        """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
 average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines and other smoothing methods for all lines)", value=True)
@@ -54,10 +72,38 @@ if uploaded_file:
             # Option to show suggested best method
             show_suggestions = st.radio("Show suggested best method for each line?", ["No", "Yes"], index=0)
 
-            # Mode selection: Standard or Visual Comparison
-            mode = st.radio("Select Mode", ["Standard", "Visual Comparison"])
+            # Mode selection
+            mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data"])
 
-            if mode == "Standard":
+            # Define fit and plot functions for reuse
+            fit_funcs = {
+                "Polynomial": fit_polynomial,
+                "Exponential": fit_exponential,
+                "Logarithmic": fit_logarithmic,
+                "Compound Poly+Log": fit_compound_poly_log,
+                "Spline": fit_spline,
+                "Savitzky-Golay": fit_savgol,
+                "LOWESS": fit_lowess,
+                "Exponential Smoothing": fit_exponential_smoothing,
+                "Gaussian Smoothing": fit_gaussian_smoothing,
+                "Wavelet Denoising": fit_wavelet_denoising,
+                "Random Forest": fit_random_forest
+            }
+            plot_funcs = {
+                "Polynomial": plot_fit,
+                "Exponential": plot_fit,
+                "Logarithmic": plot_fit,
+                "Compound Poly+Log": plot_fit,
+                "Spline": plot_fit,
+                "Savitzky-Golay": plot_fit,
+                "LOWESS": plot_fit,
+                "Exponential Smoothing": plot_fit,
+                "Gaussian Smoothing": plot_fit,
+                "Wavelet Denoising": plot_fit,
+                "Random Forest": plot_random_forest
+            }
+
+            if mode == "Curve Fit":
                 # Display message for logarithmic and compound methods
                 if st.session_state.get('method') in ["Logarithmic", "Compound Poly+Log"]:
                     st.info("Points with x ≤ 0 will be ignored for Logarithmic and Compound Poly+Log methods.")
@@ -115,32 +161,6 @@ if uploaded_file:
                 if st.button("Fit Curves"):
                     results = []
                     st.subheader("Fit Results and Graphs")
-                    fit_funcs = {
-                        "Polynomial": fit_polynomial,
-                        "Exponential": fit_exponential,
-                        "Logarithmic": fit_logarithmic,
-                        "Compound Poly+Log": fit_compound_poly_log,
-                        "Spline": fit_spline,
-                        "Savitzky-Golay": fit_savgol,
-                        "LOWESS": fit_lowess,
-                        "Exponential Smoothing": fit_exponential_smoothing,
-                        "Gaussian Smoothing": fit_gaussian_smoothing,
-                        "Wavelet Denoising": fit_wavelet_denoising,
-                        "Random Forest": fit_random_forest
-                    }
-                    plot_funcs = {
-                        "Polynomial": plot_fit,
-                        "Exponential": plot_fit,
-                        "Logarithmic": plot_fit,
-                        "Compound Poly+Log": plot_fit,
-                        "Spline": plot_fit,
-                        "Savitzky-Golay": plot_fit,
-                        "LOWESS": plot_fit,
-                        "Exponential Smoothing": plot_fit,
-                        "Gaussian Smoothing": plot_fit,
-                        "Wavelet Denoising": plot_fit,
-                        "Random Forest": plot_random_forest
-                    }
                     for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
                         try:
                             if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
@@ -180,8 +200,8 @@ if uploaded_file:
                     else:
                         st.error("No fits could be performed.")
 
-            elif mode == "Visual Comparison":
-                st.subheader("Visual Comparison Mode")
+            elif mode == "Visual Comparison with Graphs":
+                st.subheader("Visual Comparison with Graphs")
                 st.markdown("This mode shows plots for polynomials (degrees 1-10) and all other methods using default parameters for visual inspection.")
 
                 # Select all or random n lines
@@ -208,34 +228,6 @@ if uploaded_file:
                     ("Wavelet Denoising", {"wavelet": "db4", "level": 1, "threshold": 0.1}),
                     ("Random Forest", {"n_estimators": 100})
                 ])
-
-                # Fit and plot functions map
-                fit_funcs = {
-                    "Polynomial": fit_polynomial,
-                    "Exponential": fit_exponential,
-                    "Logarithmic": fit_logarithmic,
-                    "Compound Poly+Log": fit_compound_poly_log,
-                    "Spline": fit_spline,
-                    "Savitzky-Golay": fit_savgol,
-                    "LOWESS": fit_lowess,
-                    "Exponential Smoothing": fit_exponential_smoothing,
-                    "Gaussian Smoothing": fit_gaussian_smoothing,
-                    "Wavelet Denoising": fit_wavelet_denoising,
-                    "Random Forest": fit_random_forest
-                }
-                plot_funcs = {
-                    "Polynomial": plot_fit,
-                    "Exponential": plot_fit,
-                    "Logarithmic": plot_fit,
-                    "Compound Poly+Log": plot_fit,
-                    "Spline": plot_fit,
-                    "Savitzky-Golay": plot_fit,
-                    "LOWESS": plot_fit,
-                    "Exponential Smoothing": plot_fit,
-                    "Gaussian Smoothing": plot_fit,
-                    "Wavelet Denoising": plot_fit,
-                    "Random Forest": plot_random_forest
-                }
 
                 if st.button("Compare All Methods"):
                     results = []
@@ -293,6 +285,34 @@ if uploaded_file:
                         )
                     else:
                         st.error("No fits could be performed in Visual Comparison mode.")
+
+            elif mode == "Download Smoothed Data":
+                st.subheader("Download Smoothed Data")
+                st.markdown("Select a fitting method and parameters to generate smoothed curves (x_smooth, y_smooth) for each line, then download the data in Excel format matching the input structure.")
+
+                # Choose method
+                method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
+                                  "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising", "Random Forest"]
+                method = st.selectbox("Choose Fitting Method", method_options, key="method")
+
+                # Get parameters and number of points
+                params = smooth_data_ui()
+                params['average_duplicates'] = average_duplicates  # Pass average_duplicates to handle duplicates
+
+                if st.button("Generate and Download Smoothed Data"):
+                    smoothed_results = generate_smoothed_data(lines, method, params, fit_funcs)
+                    output = create_smoothed_excel(smoothed_results)
+
+                    for line_name, _, _, error_message in smoothed_results:
+                        if error_message:
+                            st.warning(f"Line '{line_name}': {error_message}")
+
+                    st.download_button(
+                        label="Download Smoothed Data Excel",
+                        data=output,
+                        file_name=f"{method.lower().replace(' ', '_')}_smoothed_data.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
