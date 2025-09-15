@@ -14,7 +14,7 @@ from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_
 from constrained_optimization import constrained_optimization_ui, optimize_coefficients, plot_constrained_fit, create_constrained_excel
 from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
 
-# Custom CSS for button styling and green rectangle for guides
+# Custom CSS for button styling and cleaner expander styling
 st.markdown("""
 <style>
 .stButton > button {
@@ -35,12 +35,15 @@ st.markdown("""
     outline: none;
     box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
 }
-.green-rectangle {
-    border: 2px solid #4CAF50;
+.stExpander {
+    border: 1px solid #d3d3d3;
     border-radius: 5px;
+    background-color: #f9f9f9;
     padding: 10px;
-    background-color: #f0fff0;
     margin-bottom: 10px;
+}
+.stExpander > div > div {
+    font-size: 14px;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -68,32 +71,27 @@ with col5:
 if show_general_instructions:
     with st.expander("General Instructions", expanded=True):
         st.markdown("""
-        <div class="green-rectangle">
         1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
         2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), Constrained Optimization (fit with restrictive points), or Outlier Detection and Cleaning (remove outliers and fit).
         3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Constrained Optimization, specify restrictive points. For Outlier Detection, choose an outlier detection method or number of outliers.
         4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods).
         5. Optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
         6. Fit curves, view graphs, or download the output Excel.
-        </div>
-        """, unsafe_allow_html=True)
+        """)
 
 # Excel Format Guide (collapsible)
 if show_excel_format:
     with st.expander("Excel Output Format Guide", expanded=True):
         st.markdown("""
-        <div class="green-rectangle">
         **Output Excel Guide (Curve Fit, Visual Comparison, Constrained Optimization):**
         - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
         - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
-        </div>
-        """, unsafe_allow_html=True)
+        """)
 
 # Curve Fit Formulas (collapsible)
 if show_formulas:
     with st.expander("Curve Fit Formulas", expanded=True):
         st.markdown("""
-        <div class="green-rectangle">
         - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
         - **Exponential**: a, b, c for y = a * exp(b*x) + c.
         - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
@@ -105,25 +103,21 @@ if show_formulas:
         - **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
         - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
         - **Random Forest**: n_estimators (number of trees).
-        </div>
-        """, unsafe_allow_html=True)
+        """)
 
 # Constrained Optimization Guide (collapsible)
 if show_constrained_optimization:
     with st.expander("Constrained Optimization Guide", expanded=True):
         st.markdown("""
-        <div class="green-rectangle">
         - **Purpose**: Fits curves (e.g., Polynomial) with coefficients optimized to pass through user-specified points (x, y).
         - **Parameters**: Select method (e.g., Polynomial), degree, number of restrictive points, and their (x, y) coordinates. Regularization strength (lambda) to preserve curve trajectory.
         - **Output**: Excel with line name, model description, optimized coefficients, and R².
-        </div>
-        """, unsafe_allow_html=True)
+        """)
 
 # Outlier Detection and Cleaning Guide (collapsible)
 if show_outlier_cleaning:
     with st.expander("Outlier Detection and Cleaning Guide", expanded=True):
         st.markdown("""
-        <div class="green-rectangle">
         - **Purpose**: Detects and removes outliers using Z-score, IQR, Isolation Forest, or a fixed number, then fits curves to cleaned data.
         - **Parameters**:
           - **Z-score**: Threshold (e.g., 3.0) for absolute Z-score.
@@ -132,8 +126,7 @@ if show_outlier_cleaning:
           - **Fixed Number**: Number of outliers to remove (based on residuals from preliminary fit).
           - Select fitting method and parameters for cleaned data.
         - **Output**: Excel with cleaned data (line name in A, B empty, x in A, y in B, empty rows).
-        </div>
-        """, unsafe_allow_html=True)
+        """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
 average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines and other smoothing methods for all lines)", value=True)
