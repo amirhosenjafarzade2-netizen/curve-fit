@@ -371,23 +371,30 @@ if uploaded_file:
                 st.subheader("Constrained Optimization")
                 st.markdown("Select a fitting method and specify restrictive points that the curve must pass through. The coefficients will be optimized to minimize MSE while satisfying the constraints.")
 
-                # Get parameters and constraints for each line
-                params = {}
-                method = "Polynomial"  # Default method as per constrained_optimization.py
+                # Get parameters once (outside the loop) using a sample line's data
+                if lines:
+                    sample_line_name, sample_x, sample_y, _, _ = lines[0]
+                    params = constrained_optimization_ui(sample_x, sample_y, line_name="global_params")
+                    method = params.pop('method')
+                else:
+                    st.error("No lines available to initialize parameters.")
+                    params = {'method': 'Polynomial', 'degree': 3, 'constraints': [], 'lambda_reg': 1.0, 'show_diagnostics': False}
+                    method = 'Polynomial'
+
                 if st.button("Optimize Coefficients"):
                     results = []
                     st.subheader("Optimization Results and Graphs")
                     for line_name, x, y, has_duplicates, has_invalid_x in lines:
                         try:
-                            # Pass x, y to constrained_optimization_ui for auto-constraint options
-                            line_params = constrained_optimization_ui(x, y)
-                            line_method = line_params.pop('method')
-                            coeffs, r2, model_desc = optimize_coefficients(x, y, line_method, line_params)
+                            # Use the globally defined params, but pass x, y for auto-constraint calculation
+                            line_params = params.copy()
+                            line_params['constraints'] = constrained_optimization_ui(x, y, line_name=line_name)['constraints']  # Update constraints per line
+                            coeffs, r2, model_desc = optimize_coefficients(x, y, method, line_params)
                             if coeffs is not None:
                                 result_row = [line_name, model_desc] + coeffs + [r2]
                                 results.append((line_name, coeffs, r2, model_desc))
                                 st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                                fig = plot_constrained_fit(x, y, coeffs, line_method, line_params)
+                                fig = plot_constrained_fit(x, y, coeffs, method, line_params)
                                 st.pyplot(fig)
                             else:
                                 st.warning(f"Line '{line_name}': {model_desc}")
@@ -441,53 +448,4 @@ if uploaded_file:
                             mask, outlier_indices = detect_outliers(x, y, detection_method, params, fit_func if detection_method == "Fixed Number" else None)
                             if mask is None:
                                 st.warning(f"Line '{line_name}': {outlier_indices}")
-                                cleaned_results.append((line_name, None, None, outlier_indices))
-                                continue
-                            x_clean = x[mask]
-                            y_clean = y[mask]
-                            cleaned_results.append((line_name, x_clean, y_clean, None))
-                            st.write(f"Line '{line_name}': Removed {len(outlier_indices)} outliers")
-
-                            # Fit on cleaned data
-                            if len(x_clean) >= min_points:
-                                coeffs, r2, model_desc = fit_func(x_clean, y_clean, **{k: v for k, v in params.items() if k not in ['detection_method', 'fit_method']})
-                                if coeffs is not None:
-                                    fit_results.append((line_name, coeffs, r2, model_desc))
-                                    st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                                    fig = plot_cleaned_data(x, y, mask, coeffs, method, params)
-                                    st.pyplot(fig)
-                                else:
-                                    st.warning(f"Line '{line_name}': Failed to fit {method} on cleaned data")
-                            else:
-                                st.warning(f"Line '{line_name}': Not enough points after outlier removal (need {min_points})")
-                        except Exception as e:
-                            st.warning(f"Line '{line_name}': Failed to process: {str(e)}")
-                            cleaned_results.append((line_name, None, None, str(e)))
-
-                    if cleaned_results:
-                        output = create_cleaned_excel(cleaned_results)
-                        st.download_button(
-                            label="Download Cleaned Data Excel",
-                            data=output,
-                            file_name="cleaned_data.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    if fit_results:
-                        max_coeffs = max(len(row[1]) for row in fit_results if row[1] is not None)
-                        columns = ['Line Name', 'Model Desc'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
-                        output_df = pd.DataFrame([[r[0], r[3]] + r[1] + [r[2]] for r in fit_results], columns=columns)
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            output_df.to_excel(writer, index=False, sheet_name='Cleaned_Fits')
-                        output.seek(0)
-                        st.download_button(
-                            label="Download Cleaned Fits Excel",
-                            data=output,
-                            file_name="cleaned_fits.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    if not cleaned_results and not fit_results:
-                        st.error("No data could be processed.")
-
-    except ValueError as e:
-        st.error(f"Failed to read Excel file: {str(e)}")
+                                cleaned_results.append
