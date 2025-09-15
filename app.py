@@ -50,26 +50,18 @@ st.markdown("""
 
 st.title("Curve Fitting App")
 
-# Two rows for instruction buttons
-# Top row: General Instructions, Excel Format Guide, Curve Fit Formulas
-col1, col2, col3 = st.columns(3)
-with col1:
-    show_general_instructions = st.button("General Instructions")
-with col2:
-    show_excel_format = st.button("Excel Format Guide")
-with col3:
-    show_formulas = st.button("Curve Fit Formulas")
+# Single collapsible window for all guides
+with st.expander("View Guides", expanded=False):
+    guide_options = [
+        "General Instructions",
+        "Excel Format Guide",
+        "Curve Fit Formulas",
+        "Constrained Optimization Guide",
+        "Outlier Detection Guide"
+    ]
+    selected_guide = st.selectbox("Select a Guide", guide_options)
 
-# Bottom row: Constrained Optimization, Outlier Detection and Cleaning
-col4, col5, _ = st.columns([1, 1, 1])  # Third column empty for alignment
-with col4:
-    show_constrained_optimization = st.button("Constrained Optimization Guide")
-with col5:
-    show_outlier_cleaning = st.button("Outlier Detection Guide")
-
-# General Instructions (collapsible)
-if show_general_instructions:
-    with st.expander("General Instructions", expanded=True):
+    if selected_guide == "General Instructions":
         st.markdown("""
         1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
         2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), Constrained Optimization (fit with restrictive points), or Outlier Detection and Cleaning (remove outliers and fit).
@@ -78,19 +70,13 @@ if show_general_instructions:
         5. Optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
         6. Fit curves, view graphs, or download the output Excel.
         """)
-
-# Excel Format Guide (collapsible)
-if show_excel_format:
-    with st.expander("Excel Output Format Guide", expanded=True):
+    elif selected_guide == "Excel Format Guide":
         st.markdown("""
         **Output Excel Guide (Curve Fit, Visual Comparison, Constrained Optimization):**
         - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
         - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
         """)
-
-# Curve Fit Formulas (collapsible)
-if show_formulas:
-    with st.expander("Curve Fit Formulas", expanded=True):
+    elif selected_guide == "Curve Fit Formulas":
         st.markdown("""
         - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
         - **Exponential**: a, b, c for y = a * exp(b*x) + c.
@@ -104,19 +90,13 @@ if show_formulas:
         - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
         - **Random Forest**: n_estimators (number of trees).
         """)
-
-# Constrained Optimization Guide (collapsible)
-if show_constrained_optimization:
-    with st.expander("Constrained Optimization Guide", expanded=True):
+    elif selected_guide == "Constrained Optimization Guide":
         st.markdown("""
         - **Purpose**: Fits curves (e.g., Polynomial) with coefficients optimized to pass through user-specified points (x, y).
         - **Parameters**: Select method (e.g., Polynomial), degree, number of restrictive points, and their (x, y) coordinates. Regularization strength (lambda) to preserve curve trajectory.
         - **Output**: Excel with line name, model description, optimized coefficients, and R².
         """)
-
-# Outlier Detection and Cleaning Guide (collapsible)
-if show_outlier_cleaning:
-    with st.expander("Outlier Detection and Cleaning Guide", expanded=True):
+    elif selected_guide == "Outlier Detection Guide":
         st.markdown("""
         - **Purpose**: Detects and removes outliers using Z-score, IQR, Isolation Forest, or a fixed number, then fits curves to cleaned data.
         - **Parameters**:
