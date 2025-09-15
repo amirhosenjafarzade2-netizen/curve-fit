@@ -60,4 +60,3 @@ def random_forest_ui():
     params = {}
     params['n_estimators'] = st.number_input("Number of trees", min_value=10, max_value=500, value=100, step=10)
     return params
-```
