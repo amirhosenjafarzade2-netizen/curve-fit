@@ -5,6 +5,10 @@ import numpy as np
 from sklearn.metrics import r2_score
 from scipy.optimize import curve_fit
 from scipy.interpolate import UnivariateSpline
+from scipy.signal import savgol_filter
+from scipy.ndimage import gaussian_filter1d
+from statsmodels.nonparametric.smoothers_lowess import lowess
+import pywt
 
 def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
     try:
@@ -201,3 +205,50 @@ def fit_spline(x, y, degree=3):
         return coeffs + knots, r2, f"Spline (degree {degree}): coeffs then knots"
     except ValueError as e:
         return None, None, f"Spline fit failed: {str(e)}"
+
+def fit_savgol(x, y, window=5, polyorder=2):
+    try:
+        if window % 2 == 0 or window <= polyorder or window > len(y):
+            raise ValueError("Invalid parameters for Savitzky-Golay")
+        smoothed_y = savgol_filter(y, window, polyorder)
+        r2 = r2_score(y, smoothed_y)
+        return [window, polyorder], r2, f"Savitzky-Golay (window {window}, order {polyorder})"
+    except Exception as e:
+        return None, None, f"Savitzky-Golay fit failed: {str(e)}"
+
+def fit_lowess(x, y, frac=0.3):
+    try:
+        smoothed_y = lowess(y, x, frac=frac, return_sorted=False)
+        r2 = r2_score(y, smoothed_y)
+        return [frac], r2, f"LOWESS (frac {frac})"
+    except Exception as e:
+        return None, None, f"LOWESS fit failed: {str(e)}"
+
+def fit_exponential_smoothing(x, y, alpha=0.5):
+    try:
+        smoothed_y = pd.Series(y).ewm(alpha=alpha).mean().values
+        r2 = r2_score(y, smoothed_y)
+        return [alpha], r2, f"Exponential Smoothing (alpha {alpha})"
+    except Exception as e:
+        return None, None, f"Exponential Smoothing fit failed: {str(e)}"
+
+def fit_gaussian_smoothing(x, y, sigma=1.0):
+    try:
+        smoothed_y = gaussian_filter1d(y, sigma)
+        r2 = r2_score(y, smoothed_y)
+        return [sigma], r2, f"Gaussian Smoothing (sigma {sigma})"
+    except Exception as e:
+        return None, None, f"Gaussian Smoothing fit failed: {str(e)}"
+
+def fit_wavelet_denoising(x, y, wavelet='db4', level=1, threshold=0.1):
+    try:
+        coeffs_wave = pywt.wavedec(y, wavelet, level=level)
+        for i in range(1, len(coeffs_wave)):
+            coeffs_wave[i] = pywt.threshold(coeffs_wave[i], threshold * np.max(coeffs_wave[i]), mode='soft')
+        smoothed_y = pywt.waverec(coeffs_wave, wavelet)
+        if len(smoothed_y) > len(y):
+            smoothed_y = smoothed_y[:len(y)]
+        r2 = r2_score(y, smoothed_y)
+        return [wavelet, level, threshold], r2, f"Wavelet Denoising ({wavelet}, level {level}, threshold {threshold})"
+    except Exception as e:
+        return None, None, f"Wavelet Denoising fit failed: {str(e)}"
