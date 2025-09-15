@@ -16,8 +16,8 @@ st.markdown("""
 1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it 
 (next line after an empty row, similarly)
 2. Choose a fitting method (and parameters like degree).
-3. Optionally enable averaging of y values for duplicate x values (for spline compatibility).
-4. View suggestions for the best overall method based on Adjusted R².
+3. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
+4. View suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
 5. Fit curves, view graphs, and download the output Excel.
 
 **Output Excel Guide:**
@@ -27,15 +27,15 @@ st.markdown("""
 - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
 - **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0; points with x ≤ 0 are ignored).
 - **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
-- **Savitzky-Golay**: window_length, polyorder.
-- **LOWESS**: frac.
-- **Exponential Smoothing**: alpha.
-- **Gaussian Smoothing**: sigma.
-- **Wavelet Denoising**: wavelet_name, level, threshold.
+- **Savitzky-Golay**: window_length, polyorder. Requires strictly increasing x values unless duplicates are averaged.
+- **LOWESS**: frac. Requires strictly increasing x values unless duplicates are averaged.
+- **Exponential Smoothing**: alpha. Requires strictly increasing x values unless duplicates are averaged.
+- **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
+- **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
 """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
-average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines for all lines)", value=True)
+average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines and other smoothing methods for all lines)", value=True)
 
 if uploaded_file:
     try:
@@ -45,7 +45,7 @@ if uploaded_file:
         else:
             st.success(f"Found {len(lines)} valid lines.")
             if skipped_lines and not average_duplicates:
-                st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines): {', '.join(skipped_lines)}")
+                st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
 
             # Display message for logarithmic and compound methods
             if st.session_state.get('method') in ["Logarithmic", "Compound Poly+Log"]:
@@ -53,6 +53,7 @@ if uploaded_file:
 
             # Suggest best method
             st.subheader("Suggested Best Method (Based on Adjusted R²)")
+            st.markdown("Note: Only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared for best method.")
             suggestions = []
             for line_name, x, y, has_duplicates, has_invalid_x in lines:
                 if len(x) > 1:
@@ -64,7 +65,8 @@ if uploaded_file:
                         st.warning(f"Line '{line_name}': Skipped in suggestion due to error: {str(e)}")
 
             # Choose method
-            method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"]
+            method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
+                              "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"]
             method = st.selectbox("Choose Fitting Method", method_options, key="method")
 
             params = {}
