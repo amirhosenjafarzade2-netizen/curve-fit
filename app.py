@@ -14,21 +14,23 @@ from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_
 
 st.title("Curve Fitting App")
 
-st.markdown("""
-### Instructions
-1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it 
-(next line after an empty row, similarly).
-2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), or Download Smoothed Data (generate smoothed curves in Excel format).
-3. For Curve Fit mode, select a fitting method and parameters. For Visual Comparison with Graphs, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
-4. For Download Smoothed Data, select a fitting method, parameters, and number of smoothed points, then download the Excel.
-5. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
-6. Optionally view suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
-7. Fit curves, view graphs, or download the output Excel.
-""")
-
-# Buttons to toggle optional sections
+# Buttons to toggle optional instruction sections
+show_general_instructions = st.button("Show General Instructions")
 show_excel_format = st.button("Show Excel Format Guide")
 show_formulas = st.button("Show Curve Fit Formulas")
+
+# General Instructions (collapsible)
+if show_general_instructions:
+    with st.expander("General Instructions", expanded=True):
+        st.markdown("""
+        1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
+        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), or Download Smoothed Data (generate smoothed curves in Excel format).
+        3. For Curve Fit mode, select a fitting method and parameters. For Visual Comparison with Graphs, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
+        4. For Download Smoothed Data, select a fitting method, parameters, and number of smoothed points, then download the Excel.
+        5. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
+        6. Optionally view suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
+        7. Fit curves, view graphs, or download the output Excel.
+        """)
 
 # Excel Format Guide (collapsible)
 if show_excel_format:
