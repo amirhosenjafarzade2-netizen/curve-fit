@@ -93,7 +93,7 @@ with st.expander("View Guides", expanded=False):
     elif selected_guide == "Constrained Optimization Guide":
         st.markdown("""
         - **Purpose**: Fits curves (e.g., Polynomial) with coefficients optimized to pass through user-specified points (x, y).
-        - **Parameters**: Select method (e.g., Polynomial), degree, number of restrictive points, and their (x, y) coordinates. Regularization strength (lambda) to preserve curve trajectory.
+        - **Parameters**: Select method (e.g., Polynomial), degree, number of manual restrictive points, and their (x, y) coordinates. If only 1 manual point is specified, options include adding the last data point as a constraint or adding random points from a user-defined range (e.g., 40%-90% of data).
         - **Output**: Excel with line name, model description, optimized coefficients, and R².
         """)
     elif selected_guide == "Outlier Detection Guide":
@@ -371,21 +371,23 @@ if uploaded_file:
                 st.subheader("Constrained Optimization")
                 st.markdown("Select a fitting method and specify restrictive points that the curve must pass through. The coefficients will be optimized to minimize MSE while satisfying the constraints.")
 
-                # Get parameters and constraints
-                params = constrained_optimization_ui()
-                method = params.pop('method')
-
+                # Get parameters and constraints for each line
+                params = {}
+                method = "Polynomial"  # Default method as per constrained_optimization.py
                 if st.button("Optimize Coefficients"):
                     results = []
                     st.subheader("Optimization Results and Graphs")
                     for line_name, x, y, has_duplicates, has_invalid_x in lines:
                         try:
-                            coeffs, r2, model_desc = optimize_coefficients(x, y, method, params)
+                            # Pass x, y to constrained_optimization_ui for auto-constraint options
+                            line_params = constrained_optimization_ui(x, y)
+                            line_method = line_params.pop('method')
+                            coeffs, r2, model_desc = optimize_coefficients(x, y, line_method, line_params)
                             if coeffs is not None:
                                 result_row = [line_name, model_desc] + coeffs + [r2]
                                 results.append((line_name, coeffs, r2, model_desc))
                                 st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                                fig = plot_constrained_fit(x, y, coeffs, method, params)
+                                fig = plot_constrained_fit(x, y, coeffs, line_method, line_params)
                                 st.pyplot(fig)
                             else:
                                 st.warning(f"Line '{line_name}': {model_desc}")
