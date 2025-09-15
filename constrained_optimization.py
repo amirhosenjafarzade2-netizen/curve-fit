@@ -77,10 +77,19 @@ def optimize_coefficients(x, y, method, params):
             y_scaled = (y - y_mean) / y_std
             constraints_scaled = [((cons_x - x_mean) / x_std, (cons_y - y_mean) / y_std) for cons_x, cons_y in constraints]
 
-            # Objective function: MSE + regularization
+            # Weighted objective function to emphasize points near restrictive points
             def objective(coeffs):
                 y_pred = np.polyval(coeffs, x_scaled)
-                mse = np.mean((y_scaled - y_pred)**2)
+                # Base weights
+                weights = np.ones_like(x_scaled)
+                # Add Gaussian weighting for each restrictive point to emphasize nearby data points
+                if constraints_scaled:
+                    for cons_x, _ in constraints_scaled:
+                        dist = (x_scaled - cons_x) ** 2
+                        weights += 10.0 * np.exp(-dist / (2 * 0.1**2))  # Adjust sigma (0.1) and multiplier (10.0) as needed
+                # Normalize weights to prevent scaling issues
+                weights /= np.mean(weights)
+                mse = np.average((y_scaled - y_pred)**2, weights=weights)
                 reg = lambda_reg * np.sum(coeffs**2)  # L2 regularization
                 return mse + reg
 
@@ -94,7 +103,7 @@ def optimize_coefficients(x, y, method, params):
 
             # Optimize with bounds to prevent extreme coefficients
             bounds = [(-100, 100) for _ in range(degree + 1)]  # Reasonable bounds for scaled coefficients
-            res = minimize(objective, initial_coeffs, method='SLSQP', constraints=cons, bounds=bounds, options={'disp': show_diagnostics})
+            res = minimize(objective, initial_coeffs, method='SLSQP', constraints=cons, bounds=bounds, options={'disp': show_diagnostics, 'maxiter': 1000})
 
             if res.success:
                 coeffs_scaled = res.x
@@ -104,16 +113,16 @@ def optimize_coefficients(x, y, method, params):
                 p_scaled = sum([coeffs_scaled[i] * z**(degree - i) for i in range(degree + 1)])
                 p_original = p_scaled * y_std + y_mean
                 p_expanded = sp.expand(p_original)
-                coeffs = [float(p_expanded.coeff(x_var ** (degree - i))) for i in range(degree + 1)]
+                coeffs = [float(p_expanded.coeff(x_var ** (degree - i))) if p_expanded.coeff(x_var ** (degree - i)) else 0.0 for i in range(degree + 1)]
 
                 y_pred = np.polyval(coeffs, x)
                 r2 = r2_score(y, y_pred)
 
-                # Verify constraints are satisfied (within tolerance)
+                # Verify constraints are satisfied (within tighter tolerance)
                 for cons_x, cons_y in constraints:
                     pred_y = np.polyval(coeffs, cons_x)
-                    if abs(pred_y - cons_y) > 1e-4:  # Increased tolerance for floating-point issues
-                        error_msg = f"Constraint not satisfied: at x={cons_x}, predicted y={pred_y:.4f} != {cons_y:.4f}"
+                    if abs(pred_y - cons_y) > 1e-6:  # Tightened tolerance
+                        error_msg = f"Constraint not satisfied: at x={cons_x}, predicted y={pred_y:.6f} != {cons_y:.6f}"
                         if show_diagnostics:
                             error_msg += f"\nTolerance exceeded. Scaled coeffs={coeffs_scaled}"
                         return None, None, error_msg
