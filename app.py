@@ -1,12 +1,12 @@
 # app.py - Main Streamlit app for curve fitting
 # Run with: streamlit run app.py
-# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl
+# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl, statsmodels, pywavelets
 # Install via: pip install -r requirements.txt
 
 import streamlit as st
 import pandas as pd
 import io
-from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline
+from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline, fit_savgol, fit_lowess, fit_exponential_smoothing, fit_gaussian_smoothing, fit_wavelet_denoising
 from plotting import plot_fit
 
 st.title("Curve Fitting App")
@@ -27,6 +27,11 @@ st.markdown("""
 - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
 - **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0; points with x ≤ 0 are ignored).
 - **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
+- **Savitzky-Golay**: window_length, polyorder.
+- **LOWESS**: frac.
+- **Exponential Smoothing**: alpha.
+- **Gaussian Smoothing**: sigma.
+- **Wavelet Denoising**: wavelet_name, level, threshold.
 """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
@@ -59,15 +64,31 @@ if uploaded_file:
                         st.warning(f"Line '{line_name}': Skipped in suggestion due to error: {str(e)}")
 
             # Choose method
-            method = st.selectbox("Choose Fitting Method", ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline"], key="method")
+            method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"]
+            method = st.selectbox("Choose Fitting Method", method_options, key="method")
 
             params = {}
+            min_points = 3  # Default for most
             if method == "Polynomial":
                 params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=2)
                 min_points = params['degree'] + 1
             elif method == "Spline":
                 params['degree'] = st.number_input("Spline Degree (1-5, 3=cubic)", min_value=1, max_value=5, value=3)
                 min_points = params['degree'] + 1
+            elif method == "Savitzky-Golay":
+                params['window'] = st.number_input("Window length (odd number >=3)", min_value=3, max_value=101, value=5, step=2)
+                params['polyorder'] = st.number_input("Polynomial order", min_value=0, max_value=5, value=2)
+                min_points = params['window']
+            elif method == "LOWESS":
+                params['frac'] = st.slider("Fraction of data for local fit", min_value=0.1, max_value=1.0, value=0.3, step=0.05)
+            elif method == "Exponential Smoothing":
+                params['alpha'] = st.slider("Smoothing factor (alpha)", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
+            elif method == "Gaussian Smoothing":
+                params['sigma'] = st.number_input("Gaussian sigma", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+            elif method == "Wavelet Denoising":
+                params['wavelet'] = st.selectbox("Wavelet family", options=['db4', 'haar', 'sym4', 'coif1'], index=0)
+                params['level'] = st.number_input("Decomposition level", min_value=1, max_value=5, value=1)
+                params['threshold'] = st.slider("Threshold factor", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
             else:
                 min_points = 3
 
@@ -84,12 +105,17 @@ if uploaded_file:
                     "Exponential": fit_exponential,
                     "Logarithmic": fit_logarithmic,
                     "Compound Poly+Log": fit_compound_poly_log,
-                    "Spline": fit_spline
+                    "Spline": fit_spline,
+                    "Savitzky-Golay": fit_savgol,
+                    "LOWESS": fit_lowess,
+                    "Exponential Smoothing": fit_exponential_smoothing,
+                    "Gaussian Smoothing": fit_gaussian_smoothing,
+                    "Wavelet Denoising": fit_wavelet_denoising
                 }
                 for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
                     try:
-                        if method == "Spline" and has_duplicates and not average_duplicates:
-                            st.warning(f"Line '{line_name}': Skipped for Spline due to duplicate x values.")
+                        if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
+                            st.warning(f"Line '{line_name}': Skipped for {method} due to duplicate x values.")
                             continue
                         fit_func = fit_funcs[method]
                         coeffs, r2, model_desc = fit_func(x, y, **params)
