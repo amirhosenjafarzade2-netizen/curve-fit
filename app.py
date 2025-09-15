@@ -20,7 +20,7 @@ st.markdown("""
 2. Choose a mode: Standard (single method with parameters) or Visual Comparison (compare all methods).
 3. For Standard mode, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare polynomials (degrees 1-10) and other methods.
 4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods for all lines).
-5. View suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
+5. Optionally view suggestions for the best overall method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared).
 6. Fit curves, view graphs, and download the output Excel.
 
 **Output Excel Guide:**
@@ -51,6 +51,9 @@ if uploaded_file:
             if skipped_lines and not average_duplicates:
                 st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
 
+            # Option to show suggested best method
+            show_suggestions = st.radio("Show suggested best method for each line?", ["No", "Yes"], index=0)
+
             # Mode selection: Standard or Visual Comparison
             mode = st.radio("Select Mode", ["Standard", "Visual Comparison"])
 
@@ -59,18 +62,19 @@ if uploaded_file:
                 if st.session_state.get('method') in ["Logarithmic", "Compound Poly+Log"]:
                     st.info("Points with x ≤ 0 will be ignored for Logarithmic and Compound Poly+Log methods.")
 
-                # Suggest best method
-                st.subheader("Suggested Best Method (Based on Adjusted R²)")
-                st.markdown("Note: Only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared for best method.")
-                suggestions = []
-                for line_name, x, y, has_duplicates, has_invalid_x in lines:
-                    if len(x) > 1:
-                        try:
-                            best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_invalid_x)
-                            suggestions.append((line_name, best_method, r2, adj_r2, desc))
-                            st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
-                        except ValueError as e:
-                            st.warning(f"Line '{line_name}': Skipped in suggestion due to error: {str(e)}")
+                # Suggest best method (only if user selects "Yes")
+                if show_suggestions == "Yes":
+                    st.subheader("Suggested Best Method (Based on Adjusted R²)")
+                    st.markdown("Note: Only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared for best method.")
+                    suggestions = []
+                    for line_name, x, y, has_duplicates, has_invalid_x in lines:
+                        if len(x) > 1:
+                            try:
+                                best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_invalid_x)
+                                suggestions.append((line_name, best_method, r2, adj_r2, desc))
+                                st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
+                            except ValueError as e:
+                                st.warning(f"Line '{line_name}': Skipped in suggestion due to error: {str(e)}")
 
                 # Choose method
                 method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
@@ -292,3 +296,4 @@ if uploaded_file:
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
+```
