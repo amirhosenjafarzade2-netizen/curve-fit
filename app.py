@@ -1,4 +1,3 @@
-```python
 # app.py - Main Streamlit app for curve fitting
 # Run with: streamlit run app.py
 # Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl, statsmodels, pywavelets
