@@ -37,15 +37,18 @@ def constrained_optimization_ui():
     # Regularization strength to preserve trajectory (optional)
     params['lambda_reg'] = st.slider("Regularization Strength (to preserve trajectory)", min_value=0.0, max_value=1.0, value=0.0, step=0.01)
 
+    # Option to show detailed diagnostics
+    params['show_diagnostics'] = st.checkbox("Show detailed diagnostics for optimization failures", value=False)
+
     return params
 
 def optimize_coefficients(x, y, method, params):
     """
-    Optimize coefficients under constraints.
+    Optimize coefficients under constraints with improved stability and error handling.
     Args:
-        x, y: Data points
+        x, y: Data points (numpy arrays)
         method: Selected method (e.g., "Polynomial")
-        params: Parameters including degree, constraints, lambda_reg
+        params: Parameters including degree, constraints, lambda_reg, show_diagnostics
     Returns: coeffs, r2, model_desc or None, None, error_message
     """
     try:
@@ -53,36 +56,74 @@ def optimize_coefficients(x, y, method, params):
             degree = params['degree']
             constraints = params['constraints']
             lambda_reg = params['lambda_reg']
+            show_diagnostics = params.get('show_diagnostics', False)
+
+            # Check for sufficient data points
+            min_points = degree + 1
+            if len(x) < min_points:
+                return None, None, f"Insufficient data points: need at least {min_points} for degree {degree} polynomial"
+
+            # Check for reasonable number of constraints
+            if len(constraints) > degree + 1:
+                return None, None, f"Too many constraints ({len(constraints)}) for degree {degree} polynomial"
+
+            # Scale data to improve numerical stability
+            x_mean, x_std = np.mean(x), np.std(x) if np.std(x) != 0 else 1
+            y_mean, y_std = np.mean(y), np.std(y) if np.std(y) != 0 else 1
+            x_scaled = (x - x_mean) / x_std
+            y_scaled = (y - y_mean) / y_std
+            constraints_scaled = [( (cons_x - x_mean) / x_std, (cons_y - y_mean) / y_std ) for cons_x, cons_y in constraints]
 
             # Objective function: MSE + regularization
             def objective(coeffs):
-                y_pred = np.polyval(coeffs, x)
-                mse = np.mean((y - y_pred)**2)
-                reg = lambda_reg * np.sum(coeffs**2)  # L2 regularization to preserve trajectory
+                y_pred = np.polyval(coeffs, x_scaled)
+                mse = np.mean((y_scaled - y_pred)**2)
+                reg = lambda_reg * np.sum(coeffs**2)  # L2 regularization
                 return mse + reg
 
             # Constraints: Equality for each restrictive point
             cons = []
-            for cons_x, cons_y in constraints:
-                cons.append({'type': 'eq', 'fun': lambda coeffs: np.polyval(coeffs, cons_x) - cons_y})
+            for cons_x, cons_y in constraints_scaled:
+                cons.append({'type': 'eq', 'fun': lambda coeffs, cx=cons_x, cy=cons_y: np.polyval(coeffs, cx) - cy})
 
-            # Initial guess: Standard polyfit without constraints
-            initial_coeffs = np.polyfit(x, y, degree)
+            # Initial guess: Standard polyfit on scaled data
+            initial_coeffs = np.polyfit(x_scaled, y_scaled, degree)
 
-            # Optimize
-            res = minimize(objective, initial_coeffs, method='SLSQP', constraints=cons)
+            # Optimize with bounds to prevent extreme coefficients
+            bounds = [(-100, 100) for _ in range(degree + 1)]  # Reasonable bounds for scaled coefficients
+            res = minimize(objective, initial_coeffs, method='SLSQP', constraints=cons, bounds=bounds, options={'disp': show_diagnostics})
+
             if res.success:
-                coeffs = res.x
+                coeffs_scaled = res.x
+                # Rescale coefficients back to original scale
+                coeffs = np.zeros_like(coeffs_scaled)
+                for i in range(degree + 1):
+                    scale_factor = (y_std / (x_std ** (degree - i)))
+                    coeffs[i] = coeffs_scaled[i] * scale_factor
+                # Adjust constant term for x_mean
+                if x_mean != 0:
+                    adjustment = sum(coeffs[i] * (-x_mean)**(degree - i) for i in range(degree))
+                    coeffs[-1] += y_mean - adjustment
+                else:
+                    coeffs[-1] += y_mean
+
                 y_pred = np.polyval(coeffs, x)
                 r2 = r2_score(y, y_pred)
                 return coeffs.tolist(), r2, f"Constrained Polynomial (degree {degree})"
             else:
-                return None, None, "Optimization failed"
+                error_msg = f"Optimization failed: {res.message}"
+                if show_diagnostics:
+                    error_msg += f"\nDiagnostics: Initial coeffs={initial_coeffs}, Constraints={constraints_scaled}, Status={res.status}"
+                return None, None, error_msg
 
         # Add other methods here if extended (e.g., Exponential with constraints)
+        return None, None, f"Method {method} not supported for constrained optimization"
 
     except Exception as e:
-        return None, None, f"Constrained optimization failed: {str(e)}"
+        error_msg = f"Constrained optimization failed: {str(e)}"
+        if params.get('show_diagnostics', False):
+            error_msg += f"\nDiagnostics: x={x}, y={y}, params={params}"
+        return None, None, error_msg
 
 def plot_constrained_fit(x, y, coeffs, method, params):
     """
