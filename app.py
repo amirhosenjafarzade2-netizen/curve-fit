@@ -229,7 +229,7 @@ if uploaded_file:
                     "LOWESS": plot_fit,
                     "Exponential Smoothing": plot_fit,
                     "Gaussian Smoothing": plot_fit,
-                    "Wavelet واDenoising": plot_fit,
+                    "Wavelet Denoising": plot_fit,
                     "Random Forest": plot_random_forest
                 }
 
