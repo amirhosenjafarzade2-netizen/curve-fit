@@ -448,4 +448,53 @@ if uploaded_file:
                             mask, outlier_indices = detect_outliers(x, y, detection_method, params, fit_func if detection_method == "Fixed Number" else None)
                             if mask is None:
                                 st.warning(f"Line '{line_name}': {outlier_indices}")
-                                cleaned_results.append
+                                cleaned_results.append((line_name, None, None, outlier_indices))
+                                continue
+                            x_clean = x[mask]
+                            y_clean = y[mask]
+                            cleaned_results.append((line_name, x_clean, y_clean, None))
+                            st.write(f"Line '{line_name}': Removed {len(outlier_indices)} outliers")
+
+                            # Fit on cleaned data
+                            if len(x_clean) >= min_points:
+                                coeffs, r2, model_desc = fit_func(x_clean, y_clean, **{k: v for k, v in params.items() if k not in ['detection_method', 'fit_method']})
+                                if coeffs is not None:
+                                    fit_results.append((line_name, coeffs, r2, model_desc))
+                                    st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
+                                    fig = plot_cleaned_data(x, y, mask, coeffs, method, params)
+                                    st.pyplot(fig)
+                                else:
+                                    st.warning(f"Line '{line_name}': Failed to fit {method} on cleaned data")
+                            else:
+                                st.warning(f"Line '{line_name}': Not enough points after outlier removal (need {min_points})")
+                        except Exception as e:
+                            st.warning(f"Line '{line_name}': Failed to process: {str(e)}")
+                            cleaned_results.append((line_name, None, None, str(e)))
+
+                    if cleaned_results:
+                        output = create_cleaned_excel(cleaned_results)
+                        st.download_button(
+                            label="Download Cleaned Data Excel",
+                            data=output,
+                            file_name="cleaned_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    if fit_results:
+                        max_coeffs = max(len(row[1]) for row in fit_results if row[1] is not None)
+                        columns = ['Line Name', 'Model Desc'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
+                        output_df = pd.DataFrame([[r[0], r[3]] + r[1] + [r[2]] for r in fit_results], columns=columns)
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            output_df.to_excel(writer, index=False, sheet_name='Cleaned_Fits')
+                        output.seek(0)
+                        st.download_button(
+                            label="Download Cleaned Fits Excel",
+                            data=output,
+                            file_name="cleaned_fits.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    if not cleaned_results and not fit_results:
+                        st.error("No data could be processed.")
+
+    except ValueError as e:
+        st.error(f"Failed to read Excel file: {str(e)}")
