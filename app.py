@@ -1,447 +1,560 @@
-# app.py - Main Streamlit app for curve fitting
-# Run with: streamlit run app.py
-# Requirements: streamlit, pandas, numpy, scikit-learn, scipy, xlsxwriter, matplotlib, openpyxl, statsmodels, pywavelets
-# Install via: pip install -r requirements.txt
+import matplotlib.pyplot as plt
+import numpy as np
+from config import COLORS
+from utils import setup_logging, polynomial
 
-import streamlit as st
-import pandas as pd
-import io
-import random
-from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline, fit_savgol, fit_lowess, fit_exponential_smoothing, fit_gaussian_smoothing, fit_wavelet_denoising
-from plotting import plot_fit
-from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
-from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
-from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
+# Global variable for GLR color mapping to ensure consistent coloring across plots
+GLR_COLOR_MAP = {}
 
-# Custom CSS for button styling and cleaner expander styling
-st.markdown("""
-<style>
-.stButton > button {
-    background-color: #4CAF50;
-    color: white;
-    border: none;
-    border-radius: 5px;
-    padding: 8px 16px;
-    margin: 5px;
-    font-size: 14px;
-    font-weight: 500;
-    transition: background-color 0.3s;
-}
-.stButton > button:hover {
-    background-color: #45a049;
-}
-.stButton > button:focus {
-    outline: none;
-    box-shadow: 0 0 5px rgba(0, 0, 0, 0.3);
-}
-.stExpander {
-    border: 1px solid #d3d3d3;
-    border-radius: 5px;
-    background-color: #f9f9f9;
-    padding: 10px;
-    margin-bottom: 10px;
-}
-.stExpander > div > div {
-    font-size: 14px;
-}
-</style>
-""", unsafe_allow_html=True)
+# Initialize logger for debugging and error tracking
+logger = setup_logging()
 
-st.title("Curve Fitting App")
-
-# Single collapsible window for all guides
-with st.expander("View Guides", expanded=False):
-    guide_options = [
-        "General Instructions",
-        "Excel Format Guide",
-        "Curve Fit Formulas",
-        "Outlier Detection Guide"
+def validate_plotting_inputs(data, param_name, min_len=2, non_negative=True, finite=True):
+    """
+    Validate input data for plotting to ensure it meets requirements.
+    
+    Parameters:
+    - data: List of tuples or array-like data to validate
+    - param_name: Name of the parameter for logging
+    - min_len: Minimum number of valid points required
+    - non_negative: If True, ensures values are non-negative
+    - finite: If True, ensures values are finite
+    
+    Returns:
+    - List of validated tuples or None if validation fails
+    """
+    if not data:
+        logger.error(f"No data provided for {param_name}")
+        return None
+    
+    # Filter valid points
+    validated_data = [
+        (x, y) for x, y in data
+        if (np.isfinite(x) and np.isfinite(y) if finite else True) and
+           (x >= 0 and y >= 0 if non_negative else True)
     ]
-    selected_guide = st.selectbox("Select a Guide", guide_options)
+    
+    if len(validated_data) < min_len:
+        logger.error(f"Insufficient valid points for {param_name}: {len(validated_data)} points")
+        return None
+    
+    logger.debug(f"Validated {len(validated_data)} points for {param_name}")
+    return validated_data
 
-    if selected_guide == "General Instructions":
-        st.markdown("""
-        1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
-        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), or Outlier Detection and Cleaning (remove outliers and fit).
-        3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Outlier Detection, choose an outlier detection method or number of outliers.
-        4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods).
-        5. Optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
-        6. Fit curves, view graphs, or download the output Excel.
-        """)
-    elif selected_guide == "Excel Format Guide":
-        st.markdown("""
-        **Output Excel Guide (Curve Fit, Visual Comparison):**
-        - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
-        - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
-        """)
-    elif selected_guide == "Curve Fit Formulas":
-        st.markdown("""
-        - **Polynomial**: Coefficients from highest degree to constant (e.g., degree 2: a_2, a_1, a_0 for y = a_2*x^2 + a_1*x + a_0).
-        - **Exponential**: a, b, c for y = a * exp(b*x) + c.
-        - **Logarithmic**: a, b for y = a * log(x) + b (requires x > 0; points with x ≤ 0 are ignored).
-        - **Compound Poly+Log**: a, b, c for y = a*x^2 + b*log(x) + c (requires x > 0; points with x ≤ 0 are ignored).
-        - **Spline**: Spline coefficients followed by knots (variable length; interpret with scipy.interpolate.UnivariateSpline). Requires strictly increasing x values unless duplicates are averaged.
-        - **Savitzky-Golay**: window_length, polyorder. Requires strictly increasing x values unless duplicates are averaged.
-        - **LOWESS**: frac. Requires strictly increasing x values unless duplicates are averaged.
-        - **Exponential Smoothing**: alpha. Requires strictly increasing x values unless duplicates are averaged.
-        - **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
-        - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
-        - **Random Forest**: n_estimators (number of trees).
-        """)
-    elif selected_guide == "Outlier Detection Guide":
-        st.markdown("""
-        - **Purpose**: Detects and removes outliers using Z-score, IQR, Isolation Forest, or a fixed number, then fits curves to cleaned data.
-        - **Parameters**:
-          - **Z-score**: Threshold (e.g., 3.0) for absolute Z-score.
-          - **IQR**: Multiplier (e.g., 1.5) for interquartile range bounds.
-          - **Isolation Forest**: Contamination (proportion of outliers, e.g., 0.1).
-          - **Fixed Number**: Number of outliers to remove (based on residuals from preliminary fit).
-          - Select fitting method and parameters for cleaned data.
-        - **Output**: Excel with cleaned data (line name in A, B empty, x in A, y in B, empty rows).
-        """)
+def configure_axes(ax, x_label, y_label, x_lim=None, y_lim=None, title=None, mode='color', is_log_log=False):
+    """
+    Configure matplotlib axes with consistent styling.
+    
+    Parameters:
+    - ax: Matplotlib axes object
+    - x_label, y_label: Axis labels
+    - x_lim, y_lim: Tuple of (min, max) for axis limits
+    - title: Plot title
+    - mode: 'color' or 'bw' for styling
+    - is_log_log: If True, use tick locators suitable for log-log plots
+    """
+    ax.set_xlabel(x_label, fontsize=10)
+    ax.set_ylabel(y_label, fontsize=10)
+    if x_lim:
+        ax.set_xlim(x_lim)
+    if y_lim:
+        ax.set_ylim(y_lim)
+    if title:
+        ax.set_title(title)
+    
+    grid_color = '#D3D3D3' if mode == 'color' else 'black'
+    ax.grid(True, which='major', color=grid_color, alpha=0.5)
+    ax.grid(True, which='minor', color=grid_color, linestyle='-', alpha=0.2 if mode == 'bw' else 0.5)
+    
+    if is_log_log:
+        # Use AutoLocator for log-log plots to ensure visible ticks
+        ax.xaxis.set_major_locator(plt.AutoLocator())
+        ax.xaxis.set_minor_locator(plt.NullLocator())  # Disable minor ticks for clarity
+        ax.yaxis.set_major_locator(plt.AutoLocator())
+        ax.yaxis.set_minor_locator(plt.NullLocator())
+    else:
+        # Use linear locators for standard plots
+        ax.xaxis.set_major_locator(plt.MultipleLocator(1000))
+        ax.xaxis.set_minor_locator(plt.MultipleLocator(200))
+        ax.yaxis.set_major_locator(plt.MultipleLocator(1000))
+        ax.yaxis.set_minor_locator(plt.MultipleLocator(200))
+    
+    ax.xaxis.set_label_position('top')
+    ax.xaxis.set_ticks_position('top')
+    ax.margins(x=0.05, y=0.05)
 
-uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
-average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines and other smoothing methods for all lines)", value=True)
-
-if uploaded_file:
+def plot_results(p1, y1, y2, p2, D, coeffs, glr_input, interpolation_status, production_rate, mode='color'):
+    """
+    Plot the pressure vs. depth curve for p2 Finder or Natural Flow Finder.
+    
+    Parameters:
+    - p1, y1, p2, y2: Pressure and depth points
+    - D: Well length in feet
+    - coeffs: Polynomial coefficients for pressure-depth relationship
+    - glr_input: Gas-Liquid Ratio
+    - interpolation_status: 'exact' or 'interpolated'
+    - production_rate: Production rate in stb/day
+    - mode: 'color' or 'bw' for colorful or black-and-white plots
+    
+    Returns:
+    - Matplotlib figure object or None if plotting fails
+    """
+    logger.info(f"Plotting pressure vs. depth: p1={p1:.2f}, y1={y1:.2f}, p2={p2:.2f}, y2={y2:.2f}, Q0={production_rate}, GLR={glr_input}")
+    
     try:
-        lines, skipped_lines = parse_excel(uploaded_file, average_duplicates=average_duplicates)
-        if not lines:
-            st.error("No valid lines found in the file.")
-        else:
-            st.success(f"Found {len(lines)} valid lines.")
-            if skipped_lines and not average_duplicates:
-                st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
-
-            # Option to show suggested best method
-            show_suggestions = st.radio("Show suggested best method for each line?", ["No", "Yes"], index=0)
-
-            # Mode selection
-            mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data", 
-                                            "Outlier Detection and Cleaning"])
-
-            # Define fit and plot functions for reuse
-            fit_funcs = {
-                "Polynomial": fit_polynomial,
-                "Exponential": fit_exponential,
-                "Logarithmic": fit_logarithmic,
-                "Compound Poly+Log": fit_compound_poly_log,
-                "Spline": fit_spline,
-                "Savitzky-Golay": fit_savgol,
-                "LOWESS": fit_lowess,
-                "Exponential Smoothing": fit_exponential_smoothing,
-                "Gaussian Smoothing": fit_gaussian_smoothing,
-                "Wavelet Denoising": fit_wavelet_denoising,
-                "Random Forest": fit_random_forest
-            }
-            plot_funcs = {
-                "Polynomial": plot_fit,
-                "Exponential": plot_fit,
-                "Logarithmic": plot_fit,
-                "Compound Poly+Log": plot_fit,
-                "Spline": plot_fit,
-                "Savitzky-Golay": plot_fit,
-                "LOWESS": plot_fit,
-                "Exponential Smoothing": plot_fit,
-                "Gaussian Smoothing": plot_fit,
-                "Wavelet Denoising": plot_fit,
-                "Random Forest": plot_random_forest
-            }
-
-            if mode == "Curve Fit":
-                # Display message for logarithmic and compound methods
-                if st.session_state.get('method') in ["Logarithmic", "Compound Poly+Log"]:
-                    st.info("Points with x ≤ 0 will be ignored for Logarithmic and Compound Poly+Log methods.")
-
-                # Suggest best method (only if user selects "Yes")
-                if show_suggestions == "Yes":
-                    st.subheader("Suggested Best Method (Based on Adjusted R²)")
-                    st.markdown("Note: Only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared for best method.")
-                    suggestions = []
-                    for line_name, x, y, has_duplicates, has_invalid_x in lines:
-                        if len(x) > 1:
-                            try:
-                                best_method, coeffs, r2, adj_r2, desc, _ = suggest_best_method(x, y, has_invalid_x)
-                                suggestions.append((line_name, best_method, r2, adj_r2, desc))
-                                st.write(f"Line '{line_name}': Best method = {best_method} ({desc}), R² = {r2:.4f}, Adjusted R² = {adj_r2:.4f}")
-                            except ValueError as e:
-                                st.warning(f"Line '{line_name}': Skipped in suggestion due to error: {str(e)}")
-
-                # Choose method
-                method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
-                                  "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising", "Random Forest"]
-                method = st.selectbox("Choose Fitting Method", method_options, key="method")
-
-                params = {}
-                min_points = 3  # Default for most
-                if method == "Polynomial":
-                    params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=2)
-                    min_points = params['degree'] + 1
-                elif method == "Spline":
-                    params['degree'] = st.number_input("Spline Degree (1-5, 3=cubic)", min_value=1, max_value=5, value=3)
-                    min_points = params['degree'] + 1
-                elif method == "Savitzky-Golay":
-                    params['window'] = st.number_input("Window length (odd number >=3)", min_value=3, max_value=101, value=5, step=2)
-                    params['polyorder'] = st.number_input("Polynomial order", min_value=0, max_value=5, value=2)
-                    min_points = params['window']
-                elif method == "LOWESS":
-                    params['frac'] = st.slider("Fraction of data for local fit", min_value=0.1, max_value=1.0, value=0.3, step=0.05)
-                elif method == "Exponential Smoothing":
-                    params['alpha'] = st.slider("Smoothing factor (alpha)", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
-                elif method == "Gaussian Smoothing":
-                    params['sigma'] = st.number_input("Gaussian sigma", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
-                elif method == "Wavelet Denoising":
-                    params['wavelet'] = st.selectbox("Wavelet family", options=['db4', 'haar', 'sym4', 'coif1'], index=0)
-                    params['level'] = st.number_input("Decomposition level", min_value=1, max_value=5, value=1)
-                    params['threshold'] = st.slider("Threshold factor", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
-                elif method == "Random Forest":
-                    params = random_forest_ui()
-                    min_points = 3
-
-                # Filter lines with enough points
-                filtered_lines = [(name, x, y, has_duplicates, has_invalid_x) for name, x, y, has_duplicates, has_invalid_x in lines if len(x) >= min_points]
-                if len(filtered_lines) < len(lines):
-                    st.warning(f"Some lines skipped due to insufficient points for {method} (need at least {min_points}).")
-
-                if st.button("Fit Curves"):
-                    results = []
-                    st.subheader("Fit Results and Graphs")
-                    for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
-                        try:
-                            if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
-                                st.warning(f"Line '{line_name}': Skipped for {method} due to duplicate x values.")
-                                continue
-                            fit_func = fit_funcs[method]
-                            coeffs, r2, model_desc = fit_func(x, y, **params)
-                            if coeffs is not None:
-                                result_row = [line_name] + coeffs + [r2]
-                                results.append(result_row)
-                                st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                                # Use original x, y for plotting to include all points
-                                plot_func = plot_funcs[method]
-                                fig = plot_func(x, y, coeffs, method, params)
-                                st.pyplot(fig)
-                            else:
-                                st.warning(f"Line '{line_name}': {model_desc}")
-                        except ValueError as e:
-                            st.warning(f"Line '{line_name}': Failed to fit {method}: {str(e)}")
-
-                    if results:
-                        max_coeffs = max(len(row) - 2 for row in results)
-                        columns = ['Line Name'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
-                        output_df = pd.DataFrame(results, columns=columns)
-
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            output_df.to_excel(writer, index=False, sheet_name='Fits')
-                        output.seek(0)
-
-                        st.download_button(
-                            label="Download Output Excel",
-                            data=output,
-                            file_name=f"{method.lower().replace(' ', '_')}_fits.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.error("No fits could be performed.")
-
-            elif mode == "Visual Comparison with Graphs":
-                st.subheader("Visual Comparison with Graphs")
-                st.markdown("This mode shows plots for polynomials (degrees 1-10) and all other methods using default parameters for visual inspection.")
-
-                # Select all or random n lines
-                comparison_type = st.radio("Compare", ["All lines", "Random n lines"])
-                if comparison_type == "Random n lines":
-                    n = st.number_input("Number of random lines", min_value=1, max_value=len(lines), value=min(5, len(lines)))
-                    selected_lines = random.sample(lines, min(n, len(lines)))
+        # Initialize figure
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+        fig.patch.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        ax.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        
+        # Generate pressure points
+        p1_full = np.linspace(0, 4000, 100)
+        y1_full = []
+        crossing_x = None
+        max_iterations = 100
+        iteration = 0
+        
+        # Compute depths for pressure points
+        for p in p1_full:
+            if iteration >= max_iterations:
+                logger.warning("Reached maximum iterations in depth calculation")
+                break
+            y = polynomial(p, coeffs)
+            if np.isfinite(y) and y <= 31000:
+                y1_full.append(y)
+            else:
+                if crossing_x is None and len(y1_full) > 0:
+                    def root_fn(x):
+                        return polynomial(x, coeffs) - 31000
+                    try:
+                        mid_guess = p1_full[max(0, len(y1_full) - 1)]
+                        candidate = np.linspace(mid_guess, p, 10)[5]
+                        if 0 <= candidate <= 4000:
+                            crossing_x = candidate
+                            y1_full.append(31000)
+                            break
+                    except Exception as e:
+                        logger.debug(f"Root finding failed: {str(e)}")
+                        crossing_x = p1_full[len(y1_full) - 1]
+                        y1_full.append(31000)
+                        break
                 else:
-                    selected_lines = lines
+                    y1_full.append(31000)
+            iteration += 1
+        
+        # Validate computed points
+        if len(y1_full) < 2:
+            logger.error("Insufficient valid points for pressure vs. depth plot")
+            plt.close(fig)
+            return None
+        
+        # Plot GLR curve
+        curve_color = 'blue' if mode == 'color' else 'black'
+        ax.plot(p1_full[:len(y1_full)], y1_full, color=curve_color, linewidth=2.5,
+                label=f'GLR curve ({interpolation_status.capitalize()}, Q0={production_rate} stb/day, GLR={glr_input})')
+        
+        # Plot data points
+        ax.scatter([p1], [y1], color=curve_color, s=50, label=f'(p1, y1) = ({p1:.2f} psi, {y1:.2f} ft)')
+        ax.scatter([p2], [y2], color=curve_color, s=50, label=f'(p2, y2) = ({p2:.2f} psi, {y2:.2f} ft)')
+        
+        # Plot reference lines
+        ax.plot([p1, p1], [y1, 0], color='red', linewidth=1, label='Connecting Line')
+        ax.plot([p1, 0], [y1, y1], color='red', linewidth=1)
+        ax.plot([p2, p2], [y2, 0], color='red', linewidth=1)
+        ax.plot([p2, 0], [y2, y2], color='red', linewidth=1)
+        ax.plot([0, 0], [y1, y2], color='green', linewidth=4, label=f'Well Length ({D:.2f} ft)')
+        
+        # Configure axes
+        configure_axes(
+            ax,
+            x_label='Gradient Pressure, psi',
+            y_label='Depth, ft',
+            x_lim=(0, 4000),
+            y_lim=(0, 31000),
+            title=None,
+            mode=mode,
+            is_log_log=False
+        )
+        ax.invert_yaxis()
+        
+        # Add legend
+        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), fontsize=8, frameon=True, edgecolor='black', ncol=1)
+        plt.tight_layout()
+        
+        # Check for empty plot
+        if len(ax.lines) == 0:
+            logger.error("Empty plot in plot_results - closing and returning None")
+            plt.close(fig)
+            return None
+        
+        logger.info("Pressure vs. depth plot generated successfully")
+        return fig
+    
+    except Exception as e:
+        logger.error(f"Failed to plot pressure vs. depth: {str(e)}")
+        plt.close()
+        return None
 
-                # Define all methods with default params
-                method_params_list = []
-                for deg in range(1, 11):
-                    method_params_list.append(("Polynomial", {"degree": deg}))
-                method_params_list.extend([
-                    ("Exponential", {}),
-                    ("Logarithmic", {}),
-                    ("Compound Poly+Log", {}),
-                    ("Spline", {"degree": 3}),
-                    ("Savitzky-Golay", {"window": 5, "polyorder": 2}),
-                    ("LOWESS", {"frac": 0.3}),
-                    ("Exponential Smoothing", {"alpha": 0.5}),
-                    ("Gaussian Smoothing", {"sigma": 1.0}),
-                    ("Wavelet Denoising", {"wavelet": "db4", "level": 1, "threshold": 0.1}),
-                    ("Random Forest", {"n_estimators": 100})
-                ])
+def plot_curves(tpr_points, ipr_points, intersection_q0, intersection_p, conduit_size, glr, D, pwh, pr, ipr_params, mode='color'):
+    """
+    Plot TPR and IPR curves with intersection point for Natural Flow Finder.
+    
+    Parameters:
+    - tpr_points, ipr_points: Lists of (q0, pressure) tuples
+    - intersection_q0, intersection_p: Intersection point
+    - conduit_size, glr, D, pwh, pr: Parameters for plot annotation
+    - ipr_params: String for IPR parameters
+    - mode: 'color' or 'bw' for colorful or black-and-white plots
+    
+    Returns:
+    - Matplotlib figure object or None if invalid
+    """
+    logger.info(f"Plotting TPR/IPR curves: GLR={glr}, conduit_size={conduit_size}, pr={pr:.2f}")
+    
+    try:
+        # Validate input points
+        tpr_points = validate_plotting_inputs(tpr_points, "TPR points")
+        ipr_points = validate_plotting_inputs(ipr_points, "IPR points")
+        if not tpr_points or not ipr_points:
+            return None
+        
+        # Unpack and sort points
+        tpr_q0, tpr_p2 = zip(*tpr_points)
+        ipr_q0, ipr_pwf = zip(*ipr_points)
+        
+        tpr_q0 = np.array(tpr_q0, dtype=float)
+        tpr_p2 = np.array(tpr_p2, dtype=float)
+        ipr_q0 = np.array(ipr_q0, dtype=float)
+        ipr_pwf = np.array(ipr_pwf, dtype=float)
+        
+        tpr_indices = np.argsort(tpr_q0)
+        ipr_indices = np.argsort(ipr_q0)
+        tpr_q0 = tpr_q0[tpr_indices]
+        tpr_p2 = tpr_p2[tpr_indices]
+        ipr_q0 = ipr_q0[ipr_indices]
+        ipr_pwf = ipr_pwf[ipr_indices]
+        
+        logger.debug(f"TPR q0 shape: {tpr_q0.shape}, TPR p2 shape: {tpr_p2.shape}")
+        logger.debug(f"IPR q0 shape: {ipr_q0.shape}, IPR pwf shape: {ipr_pwf.shape}")
+        
+        # Initialize figure
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+        fig.patch.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        ax.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        
+        # Plot TPR and IPR curves
+        tpr_color = 'blue' if mode == 'color' else 'black'
+        ax.plot(tpr_q0, tpr_p2, color=tpr_color, marker='o', linewidth=2, 
+                label=f'TPR (Conduit: {conduit_size} in, GLR: {glr}, D: {D} ft, Pwh: {pwh} psi)')
+        
+        ipr_color = 'red' if mode == 'color' else 'gray'
+        ax.plot(ipr_q0, ipr_pwf, color=ipr_color, linewidth=2, 
+                label=f'IPR ({ipr_params})')
+        
+        # Plot intersection point
+        if intersection_q0 is not None and intersection_p is not None and np.isfinite(intersection_q0) and np.isfinite(intersection_p):
+            intersect_color = 'green' if mode == 'color' else 'black'
+            ax.scatter([intersection_q0], [intersection_p], color=intersect_color, s=100, marker='*',
+                       label=f'Natural Flow Point (Q0: {intersection_q0:.2f} stb/day, P: {intersection_p:.2f} psi)')
+        
+        # Configure axes
+        configure_axes(
+            ax,
+            x_label='Production Rate, Q0 (stb/day)',
+            y_label='Pressure, psi',
+            x_lim=(0, max(max(tpr_q0), max(ipr_q0), 600) * 1.1),
+            y_lim=(0, max(max(tpr_p2), max(ipr_pwf), pr, 4000) * 1.1),
+            title='TPR and IPR Curves with Natural Flow Point',
+            mode=mode,
+            is_log_log=False
+        )
+        ax.xaxis.set_major_locator(plt.MultipleLocator(100))
+        ax.xaxis.set_minor_locator(plt.MultipleLocator(20))
+        
+        # Add legend
+        ax.legend(loc='lower center', bbox_to_anchor=(0.5, -0.3), fontsize=8, frameon=True, 
+                  edgecolor='black', ncol=1)
+        plt.tight_layout()
+        
+        # Check for empty plot
+        if len(ax.lines) == 0:
+            logger.error("Empty plot in plot_curves - closing and returning None")
+            plt.close(fig)
+            return None
+        
+        logger.info("TPR/IPR curves plot generated successfully")
+        return fig
+    
+    except Exception as e:
+        logger.error(f"Failed to plot TPR/IPR curves: {str(e)}")
+        plt.close()
+        return None
 
-                if st.button("Compare All Methods"):
-                    results = []
-                    st.subheader("Visual Comparison Results")
-                    for line_name, x, y, has_duplicates, has_invalid_x in selected_lines:
-                        st.markdown(f"### Line: {line_name}")
-                        if len(x) < 3:
-                            st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 3).")
-                            continue
-                        for method, params in method_params_list:
-                            min_points = 3
-                            if method == "Polynomial":
-                                min_points = params['degree'] + 1
-                            elif method == "Spline":
-                                min_points = params['degree'] + 1
-                            elif method == "Savitzky-Golay":
-                                min_points = params['window']
-                            if len(x) < min_points:
-                                st.warning(f"Line '{line_name}' - {method}: Skipped due to insufficient points (need {min_points}).")
-                                continue
-                            try:
-                                if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
-                                    st.warning(f"Line '{line_name}' - {method}: Skipped due to duplicate x values.")
-                                    continue
-                                fit_func = fit_funcs[method]
-                                coeffs, r2, model_desc = fit_func(x, y, **params)
-                                if coeffs is not None:
-                                    result_row = [line_name, model_desc] + coeffs + [r2]
-                                    results.append(result_row)
-                                    st.write(f"{model_desc}, R² = {r2:.4f}")
-                                    plot_func = plot_funcs[method]
-                                    fig = plot_func(x, y, coeffs, method, params)
-                                    st.pyplot(fig)
-                                else:
-                                    st.warning(f"Line '{line_name}' - {method}: {model_desc}")
-                            except ValueError as e:
-                                st.warning(f"Line '{line_name}' - {method}: Failed to fit: {str(e)}")
+def plot_fetkovich_log_log(points, pr, c, n, mode='color'):
+    """
+    Plot log-log graph for Fetkovich IPR calculation.
+    
+    Parameters:
+    - points: List of (q0, pwf) tuples
+    - pr: Reservoir pressure
+    - c, n: Fetkovich parameters
+    - mode: 'color' or 'bw' for colorful or black-and-white plots
+    
+    Returns:
+    - Matplotlib figure object or None if invalid
+    """
+    logger.info(f"Plotting Fetkovich log-log graph: pr={pr:.2f}, c={c:.4e}, n={n:.4f}")
+    
+    try:
+        # Validate points
+        points = validate_plotting_inputs(points, "Fetkovich points", non_negative=True, finite=True)
+        if not points:
+            return None
+        
+        # Unpack and process points
+        q_points, pwf_points = zip(*points)
+        delta_p = pr**2 - np.array(pwf_points)**2
+        valid_indices = np.isfinite(delta_p) & (delta_p > 0)
+        if not np.any(valid_indices):
+            logger.error("No valid delta_p values for Fetkovich log-log plot")
+            return None
+        
+        delta_p = delta_p[valid_indices]
+        q_points = np.array(q_points)[valid_indices]
+        x = np.log10(delta_p)
+        y = np.log10(q_points)
+        
+        # Initialize figure
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
+        fig.patch.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        ax.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        
+        # Plot data points and fit
+        point_color = 'blue' if mode == 'color' else 'black'
+        ax.scatter(x, y, color=point_color, s=50, label='Data Points')
+        x_fit = np.linspace(min(x), max(x), 100)
+        y_fit = np.log10(c) + n * x_fit
+        fit_color = 'red' if mode == 'color' else 'gray'
+        ax.plot(x_fit, y_fit, color=fit_color, linewidth=2, label=f'Fit: n={n:.4f}, C={c:.4e}')
+        
+        # Configure axes
+        configure_axes(
+            ax,
+            x_label='log(Pr² - Pwf²)',
+            y_label='log(Q0)',
+            title='Fetkovich Log-Log Plot',
+            mode=mode,
+            is_log_log=True
+        )
+        
+        # Add legend
+        ax.legend(loc='upper left', fontsize=8, frameon=True, edgecolor='black')
+        plt.tight_layout()
+        
+        # Check for empty plot
+        if len(ax.lines) == 0:
+            logger.error("Empty plot in plot_fetkovich_log_log - closing and returning None")
+            plt.close(fig)
+            return None
+        
+        logger.info("Fetkovich log-log plot generated successfully")
+        return fig
+    
+    except Exception as e:
+        logger.error(f"Failed to plot Fetkovich log-log graph: {str(e)}")
+        plt.close()
+        return None
 
-                    if results:
-                        # Create DataFrame with method description included
-                        max_coeffs = max(len(row) - 3 for row in results)  # Subtract line_name, model_desc, r2
-                        columns = ['Line Name', 'Method'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
-                        output_df = pd.DataFrame(results, columns=columns)
+def plot_fetkovich_flow_after_flow(points, pr, c, n, mode='color'):
+    """
+    Plot flow-after-flow graph for Fetkovich IPR calculation.
+    
+    Parameters:
+    - points: List of (q0, pwf) tuples
+    - pr: Reservoir pressure
+    - c, n: Fetkovich parameters
+    - mode: 'color' or 'bw' for colorful or black-and-white plots
+    
+    Returns:
+    - Matplotlib figure object or None if invalid
+    """
+    logger.info(f"Plotting Fetkovich flow-after-flow graph: pr={pr:.2f}, c={c:.4e}, n={n:.4f}")
+    
+    try:
+        # Validate points
+        points = validate_plotting_inputs(points, "Fetkovich flow-after-flow points", non_negative=True, finite=True)
+        if not points:
+            return None
+        
+        # Unpack points
+        q_points, pwf_points = zip(*points)
+        
+        def fetkovich_model(pwf, c, n):
+            return c * (pr**2 - pwf**2)**n
+        
+        # Initialize figure
+        fig, ax = plt.subplots(figsize=(8, 6), dpi=300)
+        fig.patch.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        ax.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        
+        # Plot data points and fit
+        point_color = 'blue' if mode == 'color' else 'black'
+        ax.scatter(pwf_points, q_points, color=point_color, s=50, label='Test Points')
+        pwf_range = np.linspace(0, pr, 100)
+        q_flow = fetkovich_model(pwf_range, c, n)
+        fit_color = 'red' if mode == 'color' else 'gray'
+        ax.plot(pwf_range, q_flow, color=fit_color, linewidth=2, label=f'IPR Fit: n={n:.4f}, C={c:.4e}')
+        
+        # Configure axes
+        configure_axes(
+            ax,
+            x_label='Flowing Bottomhole Pressure (Pwf, psi)',
+            y_label='Production Rate (Q0, stb/day)',
+            title='Flow After Flow Test Results',
+            mode=mode,
+            is_log_log=False
+        )
+        
+        # Add legend
+        ax.legend(loc='upper left', fontsize=8, frameon=True, edgecolor='black')
+        plt.tight_layout()
+        
+        # Check for empty plot
+        if len(ax.lines) == 0:
+            logger.error("Empty plot in plot_fetkovich_flow_after_flow - closing and returning None")
+            plt.close(fig)
+            return None
+        
+        logger.info("Fetkovich flow-after-flow plot generated successfully")
+        return fig
+    
+    except Exception as e:
+        logger.error(f"Failed to plot Fetkovich flow-after-flow graph: {str(e)}")
+        plt.close()
+        return None
 
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            output_df.to_excel(writer, index=False, sheet_name='Comparison_Fits')
-                        output.seek(0)
+def plot_glr_graphs(reference_data, conduit_size, production_rate, mode='color'):
+    """
+    Plot pressure vs. depth curves for all GLRs in a given conduit size and production rate.
+    
+    Parameters:
+    - reference_data: List of reference data dictionaries
+    - conduit_size: Conduit size (2.875 or 3.5)
+    - production_rate: Production rate in stb/day
+    - mode: 'color' or 'bw' for colorful or black-and-white plots
+    
+    Returns:
+    - Matplotlib figure object or None if invalid
+    """
+    logger.info(f"Plotting GLR graphs for conduit={conduit_size}, production_rate={production_rate}, mode={mode}")
+    
+    try:
+        # Filter relevant data
+        relevant_rows = [
+            entry for entry in reference_data
+            if (abs(entry['conduit_size'] - conduit_size) < 1e-6 and
+                abs(entry['production_rate'] - production_rate) < 1e-6)
+        ]
+        relevant_rows.sort(key=lambda x: x['glr'])
+        if not relevant_rows:
+            logger.warning(f"No data points found for conduit {conduit_size} in, production {production_rate} stb/day")
+            return None
 
-                        st.download_button(
-                            label="Download Comparison Excel",
-                            data=output,
-                            file_name="comparison_fits.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.error("No fits could be performed in Visual Comparison mode.")
+        # Assign colors for GLR curves
+        if mode == 'color':
+            all_glrs = sorted(set(entry['glr'] for entry in reference_data))
+            for i, glr in enumerate(all_glrs):
+                GLR_COLOR_MAP[glr] = COLORS[i % len(COLORS)]
+        else:
+            for glr in set(entry['glr'] for entry in relevant_rows):
+                GLR_COLOR_MAP[glr] = 'black'
 
-            elif mode == "Download Smoothed Data":
-                st.subheader("Download Smoothed Data")
-                st.markdown("Select a fitting method and parameters to generate smoothed curves (x_smooth, y_smooth) for each line, then download the data in Excel format matching the input structure.")
+        # Initialize figure
+        fig, ax = plt.subplots(figsize=(10, 6), dpi=300)
+        fig.patch.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
+        ax.set_facecolor('#F5F5F5' if mode == 'color' else 'white')
 
-                # Choose method
-                method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
-                                  "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising", "Random Forest"]
-                method = st.selectbox("Choose Fitting Method", method_options, key="method")
+        p1_full = np.linspace(0, 4000, 100)
+        label_positions = []
+        traces_added = 0
 
-                # Get parameters and number of points
-                params = smooth_data_ui()
-                params['average_duplicates'] = average_duplicates  # Pass average_duplicates to handle duplicates
+        # Plot GLR curves
+        for entry in relevant_rows:
+            glr = entry['glr']
+            coeffs = entry['coefficients']
 
-                if st.button("Generate and Download Smoothed Data"):
-                    smoothed_results = generate_smoothed_data(lines, method, params, fit_funcs)
-                    output = create_smoothed_excel(smoothed_results)
+            p_plot = []
+            y_plot = []
+            for p in p1_full:
+                y = polynomial(p, coeffs)
+                if np.isfinite(y) and 0 <= y <= 31000:
+                    p_plot.append(p)
+                    y_plot.append(y)
+                else:
+                    if y > 31000:
+                        break
 
-                    for line_name, _, _, error_message in smoothed_results:
-                        if error_message:
-                            st.warning(f"Line '{line_name}': {error_message}")
+            if len(p_plot) < 2:
+                logger.warning(f"GLR {glr} has insufficient valid points ({len(p_plot)}). Skipping")
+                continue
 
-                    st.download_button(
-                        label="Download Smoothed Data Excel",
-                        data=output,
-                        file_name=f"{method.lower().replace(' ', '_')}_smoothed_data.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
+            line_color = GLR_COLOR_MAP[glr]
+            label_text = f'GLR {int(glr) if glr.is_integer() else glr}' if mode == 'color' else None
+            ax.plot(p_plot, y_plot, color=line_color, linewidth=2.5, label=label_text)
+            traces_added += 1
 
-            elif mode == "Outlier Detection and Cleaning":
-                st.subheader("Outlier Detection and Cleaning")
-                st.markdown("Select an outlier detection method or specify the number of outliers to remove, then fit curves to the cleaned data.")
+            # Add text labels for black-and-white mode
+            if mode == 'bw' and p_plot and y_plot:
+                label_value = int(glr/100) if (glr/100).is_integer() else glr/100
+                end_x, end_y = p_plot[-1], y_plot[-1] - 300
+                overlap = False
+                for prev_x, prev_y in label_positions:
+                    if abs(end_y - prev_y) < 300 and abs(end_x - prev_x) < 100:
+                        overlap = True
+                        break
+                if overlap:
+                    index = max(0, len(p_plot) - 11)
+                    end_x, end_y = p_plot[index], y_plot[index] - 300
+                ax.text(end_x, end_y, f'{label_value}', fontsize=8, ha='left', va='center')
+                label_positions.append((end_x, end_y))
 
-                # Get parameters
-                params = outlier_cleaner_ui()
-                method = params.pop('fit_method')
-                detection_method = params['detection_method']
-                min_points = 3
-                if method == "Polynomial":
-                    min_points = params.get('degree', 2) + 1
-                elif method == "Spline":
-                    min_points = params.get('degree', 3) + 1
-                elif method == "Savitzky-Golay":
-                    min_points = params.get('window', 5)
+        if traces_added == 0:
+            logger.error("No valid curves added to GLR plot - closing and returning None")
+            plt.close(fig)
+            return None
 
-                # Filter lines with enough points
-                filtered_lines = [(name, x, y, has_duplicates, has_invalid_x) for name, x, y, has_duplicates, has_invalid_x in lines if len(x) >= min_points]
-                if len(filtered_lines) < len(lines):
-                    st.warning(f"Some lines skipped due to insufficient points for {method} (need at least {min_points}).")
-
-                if st.button("Detect Outliers and Fit"):
-                    cleaned_results = []
-                    fit_results = []
-                    st.subheader("Outlier Detection and Fit Results")
-                    for line_name, x, y, has_duplicates, has_invalid_x in filtered_lines:
-                        try:
-                            # Detect outliers
-                            if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
-                                st.warning(f"Line '{line_name}': Skipped for {method} due to duplicate x values.")
-                                cleaned_results.append((line_name, None, None, f"Skipped due to duplicate x values for {method}"))
-                                continue
-                            fit_func = fit_funcs[method]
-                            mask, outlier_indices = detect_outliers(x, y, detection_method, params, fit_func if detection_method == "Fixed Number" else None)
-                            if mask is None:
-                                st.warning(f"Line '{line_name}': {outlier_indices}")
-                                cleaned_results.append((line_name, None, None, outlier_indices))
-                                continue
-                            x_clean = x[mask]
-                            y_clean = y[mask]
-                            cleaned_results.append((line_name, x_clean, y_clean, None))
-                            st.write(f"Line '{line_name}': Removed {len(outlier_indices)} outliers")
-
-                            # Fit on cleaned data
-                            if len(x_clean) >= min_points:
-                                coeffs, r2, model_desc = fit_func(x_clean, y_clean, **{k: v for k, v in params.items() if k not in ['detection_method', 'fit_method']})
-                                if coeffs is not None:
-                                    fit_results.append((line_name, coeffs, r2, model_desc))
-                                    st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                                    fig = plot_cleaned_data(x, y, mask, coeffs, method, params)
-                                    st.pyplot(fig)
-                                else:
-                                    st.warning(f"Line '{line_name}': Failed to fit {method} on cleaned data")
-                            else:
-                                st.warning(f"Line '{line_name}': Not enough points after outlier removal (need {min_points})")
-                        except Exception as e:
-                            st.warning(f"Line '{line_name}': Failed to process: {str(e)}")
-                            cleaned_results.append((line_name, None, None, str(e)))
-
-                    if cleaned_results:
-                        output = create_cleaned_excel(cleaned_results)
-                        st.download_button(
-                            label="Download Cleaned Data Excel",
-                            data=output,
-                            file_name="cleaned_data.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    if fit_results:
-                        max_coeffs = max(len(row[1]) for row in fit_results if row[1] is not None)
-                        columns = ['Line Name', 'Model Desc'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
-                        output_df = pd.DataFrame([[r[0], r[3]] + r[1] + [r[2]] for r in fit_results], columns=columns)
-                        output = io.BytesIO()
-                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-                            output_df.to_excel(writer, index=False, sheet_name='Cleaned_Fits')
-                        output.seek(0)
-                        st.download_button(
-                            label="Download Cleaned Fits Excel",
-                            data=output,
-                            file_name="cleaned_fits.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    if not cleaned_results and not fit_results:
-                        st.error("No data could be processed.")
-
-    except ValueError as e:
-        st.error(f"Failed to read Excel file: {str(e)}")
+        # Configure axes
+        configure_axes(
+            ax,
+            x_label='Gradient Pressure, psi',
+            y_label='Depth, ft',
+            x_lim=(0, 4000),
+            y_lim=(0, 31000),
+            title=f"GLR Curves (Conduit: {conduit_size} in, Production: {production_rate} stb/day)",
+            mode=mode,
+            is_log_log=False
+        )
+        ax.invert_yaxis()
+        
+        # Add legend
+        if mode == 'color':
+            ax.legend(loc='center left', bbox_to_anchor=(1, 0.5), fontsize=8, frameon=True, edgecolor='black')
+        else:
+            ax.legend(['Multiply GLR line\nnumbers by 100'], loc='center left', 
+                     bbox_to_anchor=(1.05, 0.5), fontsize=8, frameon=True, edgecolor='black')
+        
+        plt.tight_layout()
+        
+        # Check for empty plot
+        if len(ax.lines) == 0:
+            logger.error("Empty plot after setup in plot_glr_graphs - closing and returning None")
+            plt.close(fig)
+            return None
+        
+        logger.info(f"GLR graphs generated successfully with {traces_added} curves")
+        return fig
+    
+    except Exception as e:
+        logger.error(f"Failed to plot GLR curves: {str(e)}")
+        plt.close()
+        return None
