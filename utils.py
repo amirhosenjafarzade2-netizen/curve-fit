@@ -54,7 +54,7 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                 x_data = np.array(x_data)
                 y_data = np.array(y_data)
                 if has_duplicates and not average_duplicates:
-                    print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines.")
+                    print(f"Warning: Line '{line_name}' has duplicate x values, may be skipped for splines or smoothing methods.")
                     skipped_lines.append(line_name)
                 lines.append((line_name, x_data, y_data, has_duplicates, invalid_x))
             else:
@@ -85,6 +85,12 @@ def calculate_adjusted_r2(r2, n, p):
     return -float('inf')
 
 def suggest_best_method(x, y, has_invalid_x):
+    """
+    Suggest the best fitting method based on Adjusted R².
+    Only Polynomial, Exponential, Logarithmic, and Compound Poly+Log are compared.
+    Spline, Savitzky-Golay, LOWESS, Exponential Smoothing, Gaussian Smoothing, and Wavelet Denoising
+    are excluded from this comparison as they are smoothing methods, not parametric fits.
+    """
     results = []
     n = len(x)
     
@@ -209,7 +215,7 @@ def fit_spline(x, y, degree=3):
 def fit_savgol(x, y, window=5, polyorder=2):
     try:
         if window % 2 == 0 or window <= polyorder or window > len(y):
-            raise ValueError("Invalid parameters for Savitzky-Golay")
+            raise ValueError("Invalid parameters for Savitzky-Golay: window must be odd, greater than polyorder, and not exceed data length")
         smoothed_y = savgol_filter(y, window, polyorder)
         r2 = r2_score(y, smoothed_y)
         return [window, polyorder], r2, f"Savitzky-Golay (window {window}, order {polyorder})"
@@ -218,6 +224,8 @@ def fit_savgol(x, y, window=5, polyorder=2):
 
 def fit_lowess(x, y, frac=0.3):
     try:
+        if frac <= 0 or frac > 1:
+            raise ValueError("Fraction must be between 0 and 1")
         smoothed_y = lowess(y, x, frac=frac, return_sorted=False)
         r2 = r2_score(y, smoothed_y)
         return [frac], r2, f"LOWESS (frac {frac})"
@@ -226,6 +234,8 @@ def fit_lowess(x, y, frac=0.3):
 
 def fit_exponential_smoothing(x, y, alpha=0.5):
     try:
+        if alpha < 0 or alpha > 1:
+            raise ValueError("Alpha must be between 0 and 1")
         smoothed_y = pd.Series(y).ewm(alpha=alpha).mean().values
         r2 = r2_score(y, smoothed_y)
         return [alpha], r2, f"Exponential Smoothing (alpha {alpha})"
@@ -234,6 +244,8 @@ def fit_exponential_smoothing(x, y, alpha=0.5):
 
 def fit_gaussian_smoothing(x, y, sigma=1.0):
     try:
+        if sigma <= 0:
+            raise ValueError("Sigma must be positive")
         smoothed_y = gaussian_filter1d(y, sigma)
         r2 = r2_score(y, smoothed_y)
         return [sigma], r2, f"Gaussian Smoothing (sigma {sigma})"
@@ -242,6 +254,8 @@ def fit_gaussian_smoothing(x, y, sigma=1.0):
 
 def fit_wavelet_denoising(x, y, wavelet='db4', level=1, threshold=0.1):
     try:
+        if threshold < 0 or threshold > 1:
+            raise ValueError("Threshold must be between 0 and 1")
         coeffs_wave = pywt.wavedec(y, wavelet, level=level)
         for i in range(1, len(coeffs_wave)):
             coeffs_wave[i] = pywt.threshold(coeffs_wave[i], threshold * np.max(coeffs_wave[i]), mode='soft')
