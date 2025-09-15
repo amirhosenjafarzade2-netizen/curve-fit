@@ -7,6 +7,7 @@ from sklearn.metrics import r2_score
 import streamlit as st
 import io
 import pandas as pd
+import sympy as sp
 
 def constrained_optimization_ui():
     """
@@ -68,11 +69,13 @@ def optimize_coefficients(x, y, method, params):
                 return None, None, f"Too many constraints ({len(constraints)}) for degree {degree} polynomial"
 
             # Scale data to improve numerical stability
-            x_mean, x_std = np.mean(x), np.std(x) if np.std(x) != 0 else 1
-            y_mean, y_std = np.mean(y), np.std(y) if np.std(y) != 0 else 1
+            x_mean = np.mean(x)
+            x_std = np.std(x) if np.std(x) != 0 else 1.0
+            y_mean = np.mean(y)
+            y_std = np.std(y) if np.std(y) != 0 else 1.0
             x_scaled = (x - x_mean) / x_std
             y_scaled = (y - y_mean) / y_std
-            constraints_scaled = [( (cons_x - x_mean) / x_std, (cons_y - y_mean) / y_std ) for cons_x, cons_y in constraints]
+            constraints_scaled = [((cons_x - x_mean) / x_std, (cons_y - y_mean) / y_std) for cons_x, cons_y in constraints]
 
             # Objective function: MSE + regularization
             def objective(coeffs):
@@ -95,21 +98,27 @@ def optimize_coefficients(x, y, method, params):
 
             if res.success:
                 coeffs_scaled = res.x
-                # Rescale coefficients back to original scale
-                coeffs = np.zeros_like(coeffs_scaled)
-                for i in range(degree + 1):
-                    scale_factor = (y_std / (x_std ** (degree - i)))
-                    coeffs[i] = coeffs_scaled[i] * scale_factor
-                # Adjust constant term for x_mean
-                if x_mean != 0:
-                    adjustment = sum(coeffs[i] * (-x_mean)**(degree - i) for i in range(degree))
-                    coeffs[-1] += y_mean - adjustment
-                else:
-                    coeffs[-1] += y_mean
+                # Rescale coefficients back to original scale using sympy for accurate expansion
+                x_var = sp.symbols('x')
+                z = (x_var - x_mean) / x_std
+                p_scaled = sum([coeffs_scaled[i] * z**(degree - i) for i in range(degree + 1)])
+                p_original = p_scaled * y_std + y_mean
+                p_expanded = sp.expand(p_original)
+                coeffs = [float(p_expanded.coeff(x_var ** (degree - i))) for i in range(degree + 1)]
 
                 y_pred = np.polyval(coeffs, x)
                 r2 = r2_score(y, y_pred)
-                return coeffs.tolist(), r2, f"Constrained Polynomial (degree {degree})"
+
+                # Verify constraints are satisfied (within tolerance)
+                for cons_x, cons_y in constraints:
+                    pred_y = np.polyval(coeffs, cons_x)
+                    if abs(pred_y - cons_y) > 1e-4:  # Increased tolerance for floating-point issues
+                        error_msg = f"Constraint not satisfied: at x={cons_x}, predicted y={pred_y:.4f} != {cons_y:.4f}"
+                        if show_diagnostics:
+                            error_msg += f"\nTolerance exceeded. Scaled coeffs={coeffs_scaled}"
+                        return None, None, error_msg
+
+                return coeffs, r2, f"Constrained Polynomial (degree {degree})"
             else:
                 error_msg = f"Optimization failed: {res.message}"
                 if show_diagnostics:
