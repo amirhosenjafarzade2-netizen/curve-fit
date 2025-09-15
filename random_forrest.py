@@ -1,4 +1,3 @@
-```python
 # random_forest.py - Standalone module for Random Forest fitting, plotting, and UI
 
 import numpy as np
