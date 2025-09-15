@@ -11,7 +11,6 @@ from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponent
 from plotting import plot_fit
 from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
 from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
-from constrained_optimization import constrained_optimization_ui, optimize_coefficients, plot_constrained_fit, create_constrained_excel
 from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
 
 # Custom CSS for button styling and cleaner expander styling
@@ -56,7 +55,6 @@ with st.expander("View Guides", expanded=False):
         "General Instructions",
         "Excel Format Guide",
         "Curve Fit Formulas",
-        "Constrained Optimization Guide",
         "Outlier Detection Guide"
     ]
     selected_guide = st.selectbox("Select a Guide", guide_options)
@@ -64,15 +62,15 @@ with st.expander("View Guides", expanded=False):
     if selected_guide == "General Instructions":
         st.markdown("""
         1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
-        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), Constrained Optimization (fit with restrictive points), or Outlier Detection and Cleaning (remove outliers and fit).
-        3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Constrained Optimization, specify restrictive points. For Outlier Detection, choose an outlier detection method or number of outliers.
+        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), or Outlier Detection and Cleaning (remove outliers and fit).
+        3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Outlier Detection, choose an outlier detection method or number of outliers.
         4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods).
         5. Optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
         6. Fit curves, view graphs, or download the output Excel.
         """)
     elif selected_guide == "Excel Format Guide":
         st.markdown("""
-        **Output Excel Guide (Curve Fit, Visual Comparison, Constrained Optimization):**
+        **Output Excel Guide (Curve Fit, Visual Comparison):**
         - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
         - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
         """)
@@ -89,12 +87,6 @@ with st.expander("View Guides", expanded=False):
         - **Gaussian Smoothing**: sigma. Requires strictly increasing x values unless duplicates are averaged.
         - **Wavelet Denoising**: wavelet_name, level, threshold. Requires strictly increasing x values unless duplicates are averaged.
         - **Random Forest**: n_estimators (number of trees).
-        """)
-    elif selected_guide == "Constrained Optimization Guide":
-        st.markdown("""
-        - **Purpose**: Fits curves (e.g., Polynomial) with coefficients optimized to pass through user-specified points (x, y).
-        - **Parameters**: Select method (e.g., Polynomial), degree, number of manual restrictive points, and their (x, y) coordinates. If only 1 manual point is specified, options include adding the last data point as a constraint or adding random points from a user-defined range (e.g., 40%-90% of data).
-        - **Output**: Excel with line name, model description, optimized coefficients, and R².
         """)
     elif selected_guide == "Outlier Detection Guide":
         st.markdown("""
@@ -126,7 +118,7 @@ if uploaded_file:
 
             # Mode selection
             mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data", 
-                                            "Constrained Optimization", "Outlier Detection and Cleaning"])
+                                            "Outlier Detection and Cleaning"])
 
             # Define fit and plot functions for reuse
             fit_funcs = {
@@ -366,51 +358,6 @@ if uploaded_file:
                         file_name=f"{method.lower().replace(' ', '_')}_smoothed_data.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
-
-            elif mode == "Constrained Optimization":
-                st.subheader("Constrained Optimization")
-                st.markdown("Select a fitting method and specify restrictive points that the curve must pass through. The coefficients will be optimized to minimize MSE while satisfying the constraints.")
-
-                # Get parameters once (outside the loop) using a sample line's data
-                if lines:
-                    sample_line_name, sample_x, sample_y, _, _ = lines[0]
-                    params = constrained_optimization_ui(sample_x, sample_y, line_name="global_params")
-                    method = params.pop('method')
-                else:
-                    st.error("No lines available to initialize parameters.")
-                    params = {'method': 'Polynomial', 'degree': 3, 'constraints': [], 'lambda_reg': 1.0, 'show_diagnostics': False}
-                    method = 'Polynomial'
-
-                if st.button("Optimize Coefficients"):
-                    results = []
-                    st.subheader("Optimization Results and Graphs")
-                    for line_name, x, y, has_duplicates, has_invalid_x in lines:
-                        try:
-                            # Use the globally defined params, but pass x, y for auto-constraint calculation
-                            line_params = params.copy()
-                            line_params['constraints'] = constrained_optimization_ui(x, y, line_name=line_name)['constraints']  # Update constraints per line
-                            coeffs, r2, model_desc = optimize_coefficients(x, y, method, line_params)
-                            if coeffs is not None:
-                                result_row = [line_name, model_desc] + coeffs + [r2]
-                                results.append((line_name, coeffs, r2, model_desc))
-                                st.write(f"Line '{line_name}': {model_desc}, R² = {r2:.4f}")
-                                fig = plot_constrained_fit(x, y, coeffs, method, line_params)
-                                st.pyplot(fig)
-                            else:
-                                st.warning(f"Line '{line_name}': {model_desc}")
-                        except ValueError as e:
-                            st.warning(f"Line '{line_name}': Failed to optimize {method}: {str(e)}")
-
-                    if results:
-                        output = create_constrained_excel(results)
-                        st.download_button(
-                            label="Download Optimized Coefficients Excel",
-                            data=output,
-                            file_name="constrained_optimization_fits.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
-                    else:
-                        st.error("No optimizations could be performed.")
 
             elif mode == "Outlier Detection and Cleaning":
                 st.subheader("Outlier Detection and Cleaning")
