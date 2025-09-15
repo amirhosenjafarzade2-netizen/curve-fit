@@ -10,9 +10,11 @@ import pandas as pd
 import sympy as sp
 from scipy.stats import iqr
 
-def constrained_optimization_ui():
+def constrained_optimization_ui(x, y):
     """
     Render UI for Constrained Coefficient Optimization mode.
+    Args:
+        x, y: Data points (numpy arrays) for auto-generating constraints
     Returns: Dictionary of parameters including constraints
     """
     params = {}
@@ -24,15 +26,58 @@ def constrained_optimization_ui():
     if params['method'] == "Polynomial":
         params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=3)
 
-    num_points = st.number_input("Number of restrictive points", min_value=0, max_value=10, value=2)
+    # Input for manual restrictive points
+    num_points = st.number_input("Number of manual restrictive points", min_value=0, max_value=10, value=1)
     params['constraints'] = []
     for i in range(num_points):
         col1, col2 = st.columns(2)
         with col1:
-            x_val = st.number_input(f"Restrictive Point {i+1}: x", value=i * 1000.0, key=f"x_{i}")
+            x_val = st.number_input(f"Restrictive Point {i+1}: x", value=0.0, key=f"x_{i}")
         with col2:
-            y_val = st.number_input(f"Restrictive Point {i+1}: y", value=i * 15000.0, key=f"y_{i}")
+            y_val = st.number_input(f"Restrictive Point {i+1}: y", value=0.0, key=f"y_{i}")
         params['constraints'].append((x_val, y_val))
+
+    # If only 1 manual constraint, offer auto-add options
+    if num_points == 1 and len(x) > 1:
+        # Sort data by x for consistent range selection
+        sorted_indices = np.argsort(x)
+        x_sorted = x[sorted_indices]
+        y_sorted = y[sorted_indices]
+
+        st.markdown("### Auto-Add Constraints (since only 1 manual point specified)")
+        
+        add_last_point = st.checkbox("Add the last data point as a constraint?", value=True)
+        if add_last_point:
+            last_x, last_y = x_sorted[-1], y_sorted[-1]
+            if (last_x, last_y) not in params['constraints']:
+                params['constraints'].append((last_x, last_y))
+                st.info(f"Added last point: ({last_x:.2f}, {last_y:.2f})")
+
+        add_random_points = st.checkbox("Add random constraint points from data?", value=False)
+        if add_random_points:
+            n_random = st.number_input("Number of random points (n)", min_value=1, max_value=5, value=2)
+            min_percent, max_percent = st.slider("Select range (%) of data for random points", 0, 100, (40, 90), step=5)
+            
+            # Calculate index range
+            num_data = len(x_sorted)
+            start_idx = int(num_data * (min_percent / 100))
+            end_idx = int(num_data * (max_percent / 100))
+            if start_idx >= end_idx:
+                st.warning("Invalid range; using full data.")
+                start_idx, end_idx = 0, num_data
+            
+            # Select random indices from range, get points, avoid duplicates
+            candidate_indices = np.arange(start_idx, end_idx)
+            if len(candidate_indices) < n_random:
+                st.warning(f"Not enough points in range; using {len(candidate_indices)} points.")
+                n_random = len(candidate_indices)
+            
+            random_indices = np.random.choice(candidate_indices, n_random, replace=False)
+            for idx in random_indices:
+                rand_x, rand_y = x_sorted[idx], y_sorted[idx]
+                if (rand_x, rand_y) not in params['constraints']:
+                    params['constraints'].append((rand_x, rand_y))
+                    st.info(f"Added random point: ({rand_x:.2f}, {rand_y:.2f}) from {min_percent}%-{max_percent}% range")
 
     params['lambda_reg'] = st.slider("Regularization Strength", min_value=0.0, max_value=10.0, value=1.0, step=0.1)
     params['show_diagnostics'] = st.checkbox("Show detailed diagnostics", value=False)
@@ -64,7 +109,7 @@ def optimize_coefficients(x, y, method, params):
             # Robust scaling using median and IQR
             x_med, x_iqr = np.median(x), iqr(x) or 1.0
             y_med, y_iqr = np.median(y), iqr(y) or 1.0
-            x_scaled = (x - x_med) / (x_iqr / 1.349)  # 1.349 normalizes IQR to std for normal data
+            x_scaled = (x - x_med) / (x_iqr / 1.349)
             y_scaled = (y - y_med) / (y_iqr / 1.349)
             constraints_scaled = [((cons_x - x_med) / (x_iqr / 1.349), (cons_y - y_med) / (y_iqr / 1.349)) for cons_x, cons_y in constraints]
 
@@ -77,10 +122,8 @@ def optimize_coefficients(x, y, method, params):
                 if constraints_scaled:
                     for cons_x, _ in constraints_scaled:
                         dist = (x_scaled - cons_x) ** 2
-                        weights += 20.0 * np.exp(-dist / (2 * 0.2**2))  # Wider Gaussian (sigma=0.2)
-                # Normalize weights
+                        weights += 20.0 * np.exp(-dist / (2 * 0.2**2))  # Wider Gaussian
                 weights /= np.mean(weights)
-                # Boost weights for dense regions
                 kernel = np.exp(-((x_scaled[:, None] - x_scaled[None, :]) ** 2) / (2 * 0.1**2))
                 density = np.sum(kernel, axis=1)
                 weights *= density / np.mean(density)
@@ -92,19 +135,18 @@ def optimize_coefficients(x, y, method, params):
             def objective(coeffs):
                 y_pred = np.polyval(coeffs, x_scaled)
                 mse = np.average((y_scaled - y_pred) ** 2, weights=weights)
-                reg = lambda_reg * np.sum(coeffs ** 2)  # L2 regularization
+                reg = lambda_reg * np.sum(coeffs ** 2)
                 return mse + reg
 
             # Constraints with high precision
             cons = [{'type': 'eq', 'fun': lambda coeffs, cx=cons_x, cy=cons_y: np.polyval(coeffs, cx) - cy} for cons_x, cons_y in constraints_scaled]
 
             # Optimize with tighter bounds and more iterations
-            bounds = [(-50, 50) for _ in range(degree + 1)]  # Tighter bounds for stability
+            bounds = [(-50, 50) for _ in range(degree + 1)]
             res = minimize(objective, initial_coeffs, method='SLSQP', constraints=cons, bounds=bounds, options={'disp': show_diagnostics, 'maxiter': 2000, 'ftol': 1e-8})
 
             if res.success:
                 coeffs_scaled = res.x
-                # Rescale coefficients with sympy
                 x_var = sp.symbols('x')
                 z = (x_var - x_med) / (x_iqr / 1.349)
                 p_scaled = sum([coeffs_scaled[i] * z**(degree - i) for i in range(degree + 1)])
@@ -115,7 +157,6 @@ def optimize_coefficients(x, y, method, params):
                 y_pred = np.polyval(coeffs, x)
                 r2 = r2_score(y, y_pred)
 
-                # Verify constraints with high precision
                 for cons_x, cons_y in constraints:
                     pred_y = np.polyval(coeffs, cons_x)
                     if abs(pred_y - cons_y) > 1e-8:
