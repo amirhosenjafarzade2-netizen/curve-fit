@@ -10,31 +10,34 @@ import pandas as pd
 import sympy as sp
 from scipy.stats import iqr
 
-def constrained_optimization_ui(x, y):
+def constrained_optimization_ui(x, y, line_name=None):
     """
     Render UI for Constrained Coefficient Optimization mode.
     Args:
         x, y: Data points (numpy arrays) for auto-generating constraints
+        line_name: Optional string to create unique widget keys per line
     Returns: Dictionary of parameters including constraints
     """
     params = {}
     st.markdown("Specify the fitting method, parameters, and restrictive points (x, y) that the curve must pass through. Multiple points can be added.")
 
+    # Use line_name to create unique key for selectbox
+    key_suffix = f"_{line_name}" if line_name else ""
     method_options = ["Polynomial"]
-    params['method'] = st.selectbox("Choose Fitting Method", method_options)
+    params['method'] = st.selectbox("Choose Fitting Method", method_options, key=f"method_select{key_suffix}")
 
     if params['method'] == "Polynomial":
-        params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=3)
+        params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=3, key=f"degree{key_suffix}")
 
     # Input for manual restrictive points
-    num_points = st.number_input("Number of manual restrictive points", min_value=0, max_value=10, value=1)
+    num_points = st.number_input("Number of manual restrictive points", min_value=0, max_value=10, value=1, key=f"num_points{key_suffix}")
     params['constraints'] = []
     for i in range(num_points):
         col1, col2 = st.columns(2)
         with col1:
-            x_val = st.number_input(f"Restrictive Point {i+1}: x", value=0.0, key=f"x_{i}")
+            x_val = st.number_input(f"Restrictive Point {i+1}: x", value=0.0, key=f"x_{i}{key_suffix}")
         with col2:
-            y_val = st.number_input(f"Restrictive Point {i+1}: y", value=0.0, key=f"y_{i}")
+            y_val = st.number_input(f"Restrictive Point {i+1}: y", value=0.0, key=f"y_{i}{key_suffix}")
         params['constraints'].append((x_val, y_val))
 
     # If only 1 manual constraint, offer auto-add options
@@ -46,17 +49,17 @@ def constrained_optimization_ui(x, y):
 
         st.markdown("### Auto-Add Constraints (since only 1 manual point specified)")
         
-        add_last_point = st.checkbox("Add the last data point as a constraint?", value=True)
+        add_last_point = st.checkbox("Add the last data point as a constraint?", value=True, key=f"add_last{key_suffix}")
         if add_last_point:
             last_x, last_y = x_sorted[-1], y_sorted[-1]
             if (last_x, last_y) not in params['constraints']:
                 params['constraints'].append((last_x, last_y))
                 st.info(f"Added last point: ({last_x:.2f}, {last_y:.2f})")
 
-        add_random_points = st.checkbox("Add random constraint points from data?", value=False)
+        add_random_points = st.checkbox("Add random constraint points from data?", value=False, key=f"add_random{key_suffix}")
         if add_random_points:
-            n_random = st.number_input("Number of random points (n)", min_value=1, max_value=5, value=2)
-            min_percent, max_percent = st.slider("Select range (%) of data for random points", 0, 100, (40, 90), step=5)
+            n_random = st.number_input("Number of random points (n)", min_value=1, max_value=5, value=2, key=f"n_random{key_suffix}")
+            min_percent, max_percent = st.slider("Select range (%) of data for random points", 0, 100, (40, 90), step=5, key=f"range_slider{key_suffix}")
             
             # Calculate index range
             num_data = len(x_sorted)
@@ -79,8 +82,8 @@ def constrained_optimization_ui(x, y):
                     params['constraints'].append((rand_x, rand_y))
                     st.info(f"Added random point: ({rand_x:.2f}, {rand_y:.2f}) from {min_percent}%-{max_percent}% range")
 
-    params['lambda_reg'] = st.slider("Regularization Strength", min_value=0.0, max_value=10.0, value=1.0, step=0.1)
-    params['show_diagnostics'] = st.checkbox("Show detailed diagnostics", value=False)
+    params['lambda_reg'] = st.slider("Regularization Strength", min_value=0.0, max_value=10.0, value=1.0, step=0.1, key=f"lambda_reg{key_suffix}")
+    params['show_diagnostics'] = st.checkbox("Show detailed diagnostics", value=False, key=f"diagnostics{key_suffix}")
 
     return params
 
