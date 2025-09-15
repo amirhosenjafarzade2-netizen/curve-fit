@@ -296,4 +296,3 @@ if uploaded_file:
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
-```
