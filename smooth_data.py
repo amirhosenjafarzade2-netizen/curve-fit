@@ -36,6 +36,10 @@ def smooth_data_ui():
         params['threshold'] = st.slider("Threshold factor", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
     elif method == "Random Forest":
         params['n_estimators'] = st.number_input("Number of trees", min_value=10, max_value=500, value=100, step=10)
+    elif method in ["Sine", "Cosine", "Tangent", "Cotangent"]:
+        params['frequency_guess'] = st.number_input("Frequency Guess (b initial value)", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+    elif method in ["Sinh", "Cosh", "Tanh"]:
+        params['scaling_guess'] = st.number_input("Scaling Guess (b initial value)", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
     return params
 
 def generate_smoothed_data(lines, method, params, fit_funcs):
@@ -64,6 +68,8 @@ def generate_smoothed_data(lines, method, params, fit_funcs):
                 min_points = params.get('degree', 3) + 1
             elif method == "Savitzky-Golay":
                 min_points = params.get('window', 5)
+            elif method in ["Sine", "Cosine", "Tangent", "Cotangent", "Sinh", "Cosh", "Tanh"]:
+                min_points = 4
             if len(x) < min_points:
                 results.append((line_name, None, None, f"Skipped for {method}: Insufficient points (need {min_points})"))
                 continue
@@ -128,6 +134,27 @@ def generate_smoothed_data(lines, method, params, fit_funcs):
                 model = RandomForestRegressor(n_estimators=int(n_estimators), random_state=42)
                 model.fit(x.reshape(-1, 1), y)
                 y_smooth = model.predict(x_smooth.reshape(-1, 1))
+            elif method == "Sine":
+                a, b, c, d = coeffs
+                y_smooth = a * np.sin(b * x_smooth + c) + d
+            elif method == "Cosine":
+                a, b, c, d = coeffs
+                y_smooth = a * np.cos(b * x_smooth + c) + d
+            elif method == "Tangent":
+                a, b, c, d = coeffs
+                y_smooth = a * np.tan(b * x_smooth + c) + d
+            elif method == "Cotangent":
+                a, b, c, d = coeffs
+                y_smooth = a / np.tan(b * x_smooth + c) + d
+            elif method == "Sinh":
+                a, b, c, d = coeffs
+                y_smooth = a * np.sinh(b * x_smooth + c) + d
+            elif method == "Cosh":
+                a, b, c, d = coeffs
+                y_smooth = a * np.cosh(b * x_smooth + c) + d
+            elif method == "Tanh":
+                a, b, c, d = coeffs
+                y_smooth = a * np.tanh(b * x_smooth + c) + d
 
             results.append((line_name, x_smooth, y_smooth, None))
         except Exception as e:
