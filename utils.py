@@ -298,3 +298,154 @@ def fit_wavelet_denoising(x, y, wavelet='db4', level=1, threshold=0.1):
         return [wavelet, level, threshold], r2, f"Wavelet Denoising ({wavelet}, level {level}, threshold {threshold})"
     except Exception as e:
         return None, None, f"Wavelet Denoising fit failed: {str(e)}"
+
+def fit_sine(x, y, frequency_guess=1.0):
+    """
+    Fit a sine model: y = a * sin(b * x + c) + d
+    Args:
+        x, y: Data points
+        frequency_guess: Initial guess for b (angular frequency, e.g., 2*pi/period)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def sin_model(x, a, b, c, d):
+        return a * np.sin(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for sine fit (need at least 4)")
+        p0 = [np.std(y), frequency_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(sin_model, x, y, p0=p0, maxfev=10000)
+        y_pred = sin_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Sine: y = a * sin(b*x + c) + d (freq_guess {frequency_guess})"
+    except Exception as e:
+        return None, None, f"Sine fit failed: {str(e)}"
+
+def fit_cosine(x, y, frequency_guess=1.0):
+    """
+    Fit a cosine model: y = a * cos(b * x + c) + d
+    Args:
+        x, y: Data points
+        frequency_guess: Initial guess for b (angular frequency, e.g., 2*pi/period)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def cos_model(x, a, b, c, d):
+        return a * np.cos(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for cosine fit (need at least 4)")
+        p0 = [np.std(y), frequency_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(cos_model, x, y, p0=p0, maxfev=10000)
+        y_pred = cos_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Cosine: y = a * cos(b*x + c) + d (freq_guess {frequency_guess})"
+    except Exception as e:
+        return None, None, f"Cosine fit failed: {str(e)}"
+
+def fit_tangent(x, y, frequency_guess=1.0):
+    """
+    Fit a tangent model: y = a * tan(b * x + c) + d
+    Args:
+        x, y: Data points
+        frequency_guess: Initial guess for b (angular frequency, e.g., 2*pi/period)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def tan_model(x, a, b, c, d):
+        return a * np.tan(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for tangent fit (need at least 4)")
+        # Bounds to avoid singularities (tan has poles at (n+0.5)*pi)
+        bounds = ([-np.inf, 0, -np.pi, -np.inf], [np.inf, np.inf, np.pi, np.inf])
+        p0 = [np.std(y), frequency_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(tan_model, x, y, p0=p0, bounds=bounds, maxfev=10000)
+        y_pred = tan_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Tangent: y = a * tan(b*x + c) + d (freq_guess {frequency_guess})"
+    except Exception as e:
+        return None, None, f"Tangent fit failed: {str(e)}"
+
+def fit_cotangent(x, y, frequency_guess=1.0):
+    """
+    Fit a cotangent model: y = a * cot(b * x + c) + d
+    Args:
+        x, y: Data points
+        frequency_guess: Initial guess for b (angular frequency, e.g., 2*pi/period)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def cot_model(x, a, b, c, d):
+        return a / np.tan(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for cotangent fit (need at least 4)")
+        # Bounds to avoid singularities (cot has poles at n*pi)
+        bounds = ([-np.inf, 0, -np.pi, -np.inf], [np.inf, np.inf, np.pi, np.inf])
+        p0 = [np.std(y), frequency_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(cot_model, x, y, p0=p0, bounds=bounds, maxfev=10000)
+        y_pred = cot_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Cotangent: y = a * cot(b*x + c) + d (freq_guess {frequency_guess})"
+    except Exception as e:
+        return None, None, f"Cotangent fit failed: {str(e)}"
+
+def fit_sinh(x, y, scaling_guess=1.0):
+    """
+    Fit a hyperbolic sine model: y = a * sinh(b * x + c) + d
+    Args:
+        x, y: Data points
+        scaling_guess: Initial guess for b (scaling factor)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def sinh_model(x, a, b, c, d):
+        return a * np.sinh(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for sinh fit (need at least 4)")
+        p0 = [np.std(y), scaling_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(sinh_model, x, y, p0=p0, maxfev=10000)
+        y_pred = sinh_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Sinh: y = a * sinh(b*x + c) + d (scaling_guess {scaling_guess})"
+    except Exception as e:
+        return None, None, f"Sinh fit failed: {str(e)}"
+
+def fit_cosh(x, y, scaling_guess=1.0):
+    """
+    Fit a hyperbolic cosine model: y = a * cosh(b * x + c) + d
+    Args:
+        x, y: Data points
+        scaling_guess: Initial guess for b (scaling factor)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def cosh_model(x, a, b, c, d):
+        return a * np.cosh(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for cosh fit (need at least 4)")
+        p0 = [np.std(y), scaling_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(cosh_model, x, y, p0=p0, maxfev=10000)
+        y_pred = cosh_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Cosh: y = a * cosh(b*x + c) + d (scaling_guess {scaling_guess})"
+    except Exception as e:
+        return None, None, f"Cosh fit failed: {str(e)}"
+
+def fit_tanh(x, y, scaling_guess=1.0):
+    """
+    Fit a hyperbolic tangent model: y = a * tanh(b * x + c) + d
+    Args:
+        x, y: Data points
+        scaling_guess: Initial guess for b (scaling factor)
+    Returns: Coefficients [a, b, c, d], R², description
+    """
+    def tanh_model(x, a, b, c, d):
+        return a * np.tanh(b * x + c) + d
+    try:
+        if len(x) < 4:
+            raise ValueError("Insufficient points for tanh fit (need at least 4)")
+        p0 = [np.std(y), scaling_guess, 0, np.mean(y)]
+        popt, _ = curve_fit(tanh_model, x, y, p0=p0, maxfev=10000)
+        y_pred = tanh_model(x, *popt)
+        r2 = r2_score(y, y_pred)
+        return popt.tolist(), r2, f"Tanh: y = a * tanh(b*x + c) + d (scaling_guess {scaling_guess})"
+    except Exception as e:
+        return None, None, f"Tanh fit failed: {str(e)}"
