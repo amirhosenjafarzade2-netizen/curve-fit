@@ -35,7 +35,8 @@ def outlier_cleaner_ui():
     # Fitting method for cleaned data
     method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", 
                       "Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", 
-                      "Gaussian Smoothing", "Wavelet Denoising", "Random Forest"]
+                      "Gaussian Smoothing", "Wavelet Denoising", "Random Forest",
+                      "Sine", "Cosine", "Tangent", "Cotangent", "Sinh", "Cosh", "Tanh"]
     params['fit_method'] = st.selectbox("Fitting Method for Cleaned Data", method_options)
 
     # Parameters for the fitting method
@@ -56,6 +57,10 @@ def outlier_cleaner_ui():
         params['wavelet'] = st.selectbox("Wavelet family", options=['db4', 'haar', 'sym4', 'coif1'], index=0)
         params['level'] = st.number_input("Decomposition level", min_value=1, max_value=5, value=1)
         params['threshold'] = st.slider("Threshold factor", min_value=0.0, max_value=1.0, value=0.1, step=0.05)
+    elif params['fit_method'] in ["Sine", "Cosine", "Tangent", "Cotangent"]:
+        params['frequency_guess'] = st.number_input("Frequency Guess (b initial value)", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
+    elif params['fit_method'] in ["Sinh", "Cosh", "Tanh"]:
+        params['scaling_guess'] = st.number_input("Scaling Guess (b initial value)", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
 
     return params
 
@@ -94,6 +99,36 @@ def detect_outliers(x, y, detection_method, params, fit_func=None):
                 if coeffs is not None:
                     if params['fit_method'] == "Polynomial":
                         y_pred = np.polyval(coeffs, x)
+                    elif params['fit_method'] == "Exponential":
+                        a, b, c = coeffs
+                        y_pred = a * np.exp(b * x) + c
+                    elif params['fit_method'] == "Logarithmic":
+                        a, b = coeffs
+                        y_pred = a * np.log(x + 1e-10) + b
+                    elif params['fit_method'] == "Compound Poly+Log":
+                        a, b, c = coeffs
+                        y_pred = a * x**2 + b * np.log(x + 1e-10) + c
+                    elif params['fit_method'] == "Sine":
+                        a, b, c, d = coeffs
+                        y_pred = a * np.sin(b * x + c) + d
+                    elif params['fit_method'] == "Cosine":
+                        a, b, c, d = coeffs
+                        y_pred = a * np.cos(b * x + c) + d
+                    elif params['fit_method'] == "Tangent":
+                        a, b, c, d = coeffs
+                        y_pred = a * np.tan(b * x + c) + d
+                    elif params['fit_method'] == "Cotangent":
+                        a, b, c, d = coeffs
+                        y_pred = a / np.tan(b * x + c) + d
+                    elif params['fit_method'] == "Sinh":
+                        a, b, c, d = coeffs
+                        y_pred = a * np.sinh(b * x + c) + d
+                    elif params['fit_method'] == "Cosh":
+                        a, b, c, d = coeffs
+                        y_pred = a * np.cosh(b * x + c) + d
+                    elif params['fit_method'] == "Tanh":
+                        a, b, c, d = coeffs
+                        y_pred = a * np.tanh(b * x + c) + d
                     else:
                         # For non-polynomial methods, assume fit_func returns a callable model
                         y_pred = coeffs(x)
@@ -130,6 +165,36 @@ def plot_cleaned_data(x, y, mask, coeffs, method, params):
         x_smooth = np.linspace(min(x), max(x), 200)
         if method == "Polynomial":
             y_smooth = np.polyval(coeffs, x_smooth)
+        elif method == "Exponential":
+            a, b, c = coeffs
+            y_smooth = a * np.exp(b * x_smooth) + c
+        elif method == "Logarithmic":
+            a, b = coeffs
+            y_smooth = a * np.log(x_smooth + 1e-10) + b
+        elif method == "Compound Poly+Log":
+            a, b, c = coeffs
+            y_smooth = a * x_smooth**2 + b * np.log(x_smooth + 1e-10) + c
+        elif method == "Sine":
+            a, b, c, d = coeffs
+            y_smooth = a * np.sin(b * x_smooth + c) + d
+        elif method == "Cosine":
+            a, b, c, d = coeffs
+            y_smooth = a * np.cos(b * x_smooth + c) + d
+        elif method == "Tangent":
+            a, b, c, d = coeffs
+            y_smooth = a * np.tan(b * x_smooth + c) + d
+        elif method == "Cotangent":
+            a, b, c, d = coeffs
+            y_smooth = a / np.tan(b * x_smooth + c) + d
+        elif method == "Sinh":
+            a, b, c, d = coeffs
+            y_smooth = a * np.sinh(b * x_smooth + c) + d
+        elif method == "Cosh":
+            a, b, c, d = coeffs
+            y_smooth = a * np.cosh(b * x_smooth + c) + d
+        elif method == "Tanh":
+            a, b, c, d = coeffs
+            y_smooth = a * np.tanh(b * x_smooth + c) + d
         elif method in ["Spline", "LOWESS", "Savitzky-Golay", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"]:
             # For these methods, coeffs is a callable
             y_smooth = coeffs(x_smooth)
