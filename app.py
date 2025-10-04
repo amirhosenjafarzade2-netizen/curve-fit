@@ -72,7 +72,7 @@ with st.expander("View Guides", expanded=False):
         st.markdown("""
         **Output Excel Guide (Curve Fit, Visual Comparison):**
         - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
-        - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty rows, next line, etc.
+        - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
         """)
     elif selected_guide == "Curve Fit Formulas":
         st.markdown("""
@@ -289,51 +289,106 @@ if uploaded_file:
 
             elif mode == "Visual Comparison with Graphs":
                 st.subheader("Visual Comparison with Graphs")
-                st.markdown("Compare all fitting methods on selected lines (all or n random).")
-                line_selection = st.radio("Select Lines", ["All Lines", "Random Lines"], index=0)
-                if line_selection == "Random Lines":
-                    n_lines = st.number_input("Number of Random Lines", min_value=1, max_value=len(lines), value=min(5, len(lines)))
-                    selected_lines = random.sample(lines, n_lines)
+                st.markdown("This mode shows plots for polynomials (degrees 1-10) and all other methods using default parameters for visual inspection.")
+
+                # Select all or random n lines
+                comparison_type = st.radio("Compare", ["All Lines", "Random Lines"])
+                if comparison_type == "Random Lines":
+                    n = st.number_input("Number of Random Lines", min_value=1, max_value=len(lines), value=min(5, len(lines)))
+                    selected_lines = random.sample(lines, min(n, len(lines)))
                 else:
                     selected_lines = lines
 
+                # Define all methods with default params
+                method_params_list = []
+                for deg in range(1, 11):
+                    method_params_list.append(("Polynomial", {"degree": deg}))
+                method_params_list.extend([
+                    ("Exponential", {}),
+                    ("Logarithmic", {}),
+                    ("Compound Poly+Log", {}),
+                    ("Spline", {"degree": 3}),
+                    ("Savitzky-Golay", {"window": 5, "polyorder": 2}),
+                    ("LOWESS", {"frac": 0.3}),
+                    ("Exponential Smoothing", {"alpha": 0.5}),
+                    ("Gaussian Smoothing", {"sigma": 1.0}),
+                    ("Wavelet Denoising", {"wavelet": "db4", "level": 1, "threshold": 0.1}),
+                    ("Random Forest", {"n_estimators": 100}),
+                    ("Sine", {"frequency_guess": 1.0}),
+                    ("Cosine", {"frequency_guess": 1.0}),
+                    ("Tangent", {"frequency_guess": 1.0}),
+                    ("Cotangent", {"frequency_guess": 1.0}),
+                    ("Sinh", {"scaling_guess": 1.0}),
+                    ("Cosh", {"scaling_guess": 1.0}),
+                    ("Tanh", {"scaling_guess": 1.0})
+                ])
+
                 if st.button("Generate Comparison"):
+                    results = []
+                    st.subheader("Visual Comparison Results")
                     for line_name, x, y, has_duplicates, has_invalid_x in selected_lines:
-                        st.subheader(f"Line: {line_name}")
-                        for method in method_options:
-                            if method in ["Logarithmic", "Compound Poly+Log"] and has_invalid_x:
-                                st.write(f"{method}: Skipped (x ≤ 0 not allowed)")
-                                continue
-                            if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
-                                st.write(f"{method}: Skipped due to duplicate x values")
-                                continue
+                        st.markdown(f"### Line: {line_name}")
+                        if len(x) < 3:
+                            st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 3).")
+                            continue
+                        for method, params in method_params_list:
                             min_points = 3
                             if method == "Polynomial":
-                                min_points = params.get('degree', 2) + 1
+                                min_points = params['degree'] + 1
                             elif method == "Spline":
-                                min_points = params.get('degree', 3) + 1
+                                min_points = params['degree'] + 1
                             elif method == "Savitzky-Golay":
-                                min_points = params.get('window', 5)
+                                min_points = params['window']
                             elif method in ["Sine", "Cosine", "Tangent", "Cotangent", "Sinh", "Cosh", "Tanh"]:
                                 min_points = 4
                             if len(x) < min_points:
-                                st.write(f"{method}: Skipped (insufficient points, need {min_points})")
+                                st.warning(f"Line '{line_name}' - {method}: Skipped due to insufficient points (need {min_points}).")
                                 continue
-                            # Use default params for comparison
-                            temp_params = {'degree': 2, 'window': 5, 'polyorder': 2, 'frac': 0.3, 'alpha': 0.5, 'sigma': 1.0, 
-                                           'wavelet': 'db4', 'level': 1, 'threshold': 0.1, 'n_estimators': 100, 
-                                           'frequency_guess': 1.0, 'scaling_guess': 1.0}
-                            coeffs, r2, model_desc = fit_funcs[method](x, y, **{k: v for k, v in temp_params.items() if k in fit_funcs[method].__code__.co_varnames})
-                            if coeffs is None:
-                                st.write(f"{method}: {model_desc}")
-                            else:
-                                st.write(f"{method}: {model_desc}, R² = {r2:.4f}")
-                                fig = plot_funcs[method](x, y, coeffs, method, temp_params)
-                                st.pyplot(fig)
+                            try:
+                                if method in ["Logarithmic", "Compound Poly+Log"] and has_invalid_x:
+                                    st.write(f"{method}: Skipped (x ≤ 0 not allowed)")
+                                    continue
+                                if method in ["Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", "Wavelet Denoising"] and has_duplicates and not average_duplicates:
+                                    st.warning(f"Line '{line_name}' - {method}: Skipped due to duplicate x values.")
+                                    continue
+                                fit_func = fit_funcs[method]
+                                coeffs, r2, model_desc = fit_func(x, y, **params)
+                                if coeffs is None:
+                                    st.warning(f"Line '{line_name}' - {method}: {model_desc}")
+                                else:
+                                    result_row = [line_name, model_desc] + coeffs + [r2]
+                                    results.append(result_row)
+                                    st.write(f"{model_desc}, R² = {r2:.4f}")
+                                    plot_func = plot_funcs[method]
+                                    fig = plot_func(x, y, coeffs, method, params)
+                                    st.pyplot(fig)
+                            except ValueError as e:
+                                st.warning(f"Line '{line_name}' - {method}: Failed to fit: {str(e)}")
+
+                    if results:
+                        max_coeffs = max(len(row) - 3 for row in results)  # Subtract line_name, model_desc, r2
+                        columns = ['Line Name', 'Method'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2']
+                        output_df = pd.DataFrame(results, columns=columns)
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            output_df.to_excel(writer, index=False, sheet_name='Comparison_Fits')
+                        output.seek(0)
+                        st.download_button(
+                            label="Download Comparison Excel",
+                            data=output,
+                            file_name="comparison_fits.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.error("No fits could be performed in Visual Comparison mode.")
 
             elif mode == "Download Smoothed Data":
                 st.subheader("Download Smoothed Data")
                 st.markdown("Select a fitting method and parameters to generate smoothed data for all lines.")
+                method_options = ["Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log", "Spline", 
+                                  "Savitzky-Golay", "LOWESS", "Exponential Smoothing", "Gaussian Smoothing", 
+                                  "Wavelet Denoising", "Random Forest", "Sine", "Cosine", "Tangent", "Cotangent", 
+                                  "Sinh", "Cosh", "Tanh"]
                 method = st.selectbox("Choose Fitting Method", method_options, key="smooth_method")
                 if method in ["Logarithmic", "Compound Poly+Log"]:
                     st.info("Points with x ≤ 0 will be ignored for Logarithmic and Compound Poly+Log methods.")
