@@ -87,6 +87,34 @@ def plot_fit(x, y, coeffs, method, params):
         except ValueError:
             ax.text(0.5, 0.5, 'Wavelet Denoising plot failed', 
                     ha='center', va='center', transform=ax.transAxes, color='red')
+    elif method == "Sine":
+        a, b, c, d = coeffs
+        y_smooth = a * np.sin(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Sine (freq_guess {params.get("frequency_guess", "?")})')
+    elif method == "Cosine":
+        a, b, c, d = coeffs
+        y_smooth = a * np.cos(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Cosine (freq_guess {params.get("frequency_guess", "?")})')
+    elif method == "Tangent":
+        a, b, c, d = coeffs
+        y_smooth = a * np.tan(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Tangent (freq_guess {params.get("frequency_guess", "?")})')
+    elif method == "Cotangent":
+        a, b, c, d = coeffs
+        y_smooth = a / np.tan(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Cotangent (freq_guess {params.get("frequency_guess", "?")})')
+    elif method == "Sinh":
+        a, b, c, d = coeffs
+        y_smooth = a * np.sinh(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Sinh (scaling_guess {params.get("scaling_guess", "?")})')
+    elif method == "Cosh":
+        a, b, c, d = coeffs
+        y_smooth = a * np.cosh(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Cosh (scaling_guess {params.get("scaling_guess", "?")})')
+    elif method == "Tanh":
+        a, b, c, d = coeffs
+        y_smooth = a * np.tanh(b * x_smooth + c) + d
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Tanh (scaling_guess {params.get("scaling_guess", "?")})')
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
