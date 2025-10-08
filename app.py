@@ -12,6 +12,7 @@ from plotting import plot_fit
 from random_forest import fit_random_forest, plot_random_forest, random_forest_ui
 from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
 from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
+from parametric_modes import parametric_ui, generate_parametric_data, plot_parametric, create_parametric_excel
 
 # Custom CSS for button styling and cleaner expander styling
 st.markdown("""
@@ -55,24 +56,25 @@ with st.expander("View Guides", expanded=False):
         "General Instructions",
         "Excel Format Guide",
         "Curve Fit Formulas",
-        "Outlier Detection Guide"
+        "Outlier Detection Guide",
+        "Parametric Fitting Guide"
     ]
     selected_guide = st.selectbox("Select a Guide", guide_options)
 
     if selected_guide == "General Instructions":
         st.markdown("""
         1. Upload an Excel file with line data: Line name in column A (B empty), then x in A, y in B below it (next line after an empty row, similarly).
-        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), or Outlier Detection and Cleaning (remove outliers and fit).
-        3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Outlier Detection, choose an outlier detection method or number of outliers.
-        4. Optionally enable averaging of y values for duplicate x values (enables splines and other smoothing methods).
-        5. Optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
+        2. Choose a mode: Curve Fit (single method with parameters), Visual Comparison with Graphs (compare all methods), Download Smoothed Data (generate smoothed curves), Outlier Detection and Cleaning (remove outliers and fit), or Parametric Fitting (fit non-functional curves like circles or vertical lines).
+        3. For Curve Fit, select a fitting method and parameters. For Visual Comparison, choose all lines or n random lines to compare methods. For Download Smoothed Data, select a method, parameters, and number of points. For Outlier Detection, choose an outlier detection method or number of outliers. For Parametric Fitting, select a sub-mode (e.g., Parametric Spline, Path Interpolation) and parameters.
+        4. For functional modes (Curve Fit, Visual Comparison, etc.), optionally enable averaging of y values for duplicate x values to enable splines and smoothing methods.
+        5. For functional modes, optionally view suggestions for the best method based on Adjusted R² (only Polynomial, Exponential, Logarithmic, and Compound Poly+Log compared).
         6. Fit curves, view graphs, or download the output Excel.
         """)
     elif selected_guide == "Excel Format Guide":
         st.markdown("""
         **Output Excel Guide (Curve Fit, Visual Comparison):**
         - **Columns**: 'Line Name', then coefficients/parameters, followed by R².
-        - **Smoothed Data and Outlier Cleaning Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
+        - **Smoothed Data, Outlier Cleaning, and Parametric Fitting Excel Format**: Similar to input: Line name in column A (B empty), then x in A, y in B below it, empty row, next line, etc.
         """)
     elif selected_guide == "Curve Fit Formulas":
         st.markdown("""
@@ -99,9 +101,23 @@ with st.expander("View Guides", expanded=False):
           - Select fitting method and parameters for cleaned data.
         - **Output**: Excel with cleaned data (line name in A, B empty, x in A, y in B, empty rows).
         """)
+    elif selected_guide == "Parametric Fitting Guide":
+        st.markdown("""
+        - **Purpose**: Fits non-functional curves (e.g., circles, vertical lines, loops) by treating x and y as parametric functions of t (x=f(t), y=g(t)).
+        - **Sub-Modes**:
+          - **Parametric Spline**: Fits a smooth B-spline curve through points, preserving order.
+          - **Path Interpolation**: Interpolates points along the path based on arc length.
+          - **Bezier Spline**: Fits a B-spline approximating Bezier-like curves.
+          - **Gaussian Process**: Fits x(t) and y(t) using Gaussian Processes for noisy data.
+        - **Parameters**:
+          - Number of smoothed points per line.
+          - For Gaussian Process: RBF length scale.
+        - **Output**: Excel with smoothed parametric data (line name in A, B empty, x in A, y in B, empty rows).
+        - **Note**: Points are not sorted by x, and duplicates are preserved to maintain curve geometry.
+        """)
 
 uploaded_file = st.file_uploader("Upload Excel file", type=["xlsx", "xls"])
-average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines and other smoothing methods for all lines)", value=True)
+average_duplicates = st.checkbox("Average y values for duplicate x values (enables splines and other smoothing methods for functional modes)", value=True)
 
 if uploaded_file:
     try:
@@ -113,12 +129,12 @@ if uploaded_file:
             if skipped_lines and not average_duplicates:
                 st.warning(f"Skipped {len(skipped_lines)} lines due to duplicate x values (not suitable for splines or smoothing methods): {', '.join(skipped_lines)}")
 
-            # Option to show suggested best method
-            show_suggestions = st.radio("Show suggested best method for each line?", ["No", "Yes"], index=0)
+            # Option to show suggested best method (for functional modes only)
+            show_suggestions = st.radio("Show suggested best method for each line? (Functional modes only)", ["No", "Yes"], index=0)
 
             # Mode selection
             mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data", 
-                                            "Outlier Detection and Cleaning"])
+                                            "Outlier Detection and Cleaning", "Parametric Fitting"])
 
             # Define fit and plot functions for reuse
             fit_funcs = {
@@ -442,6 +458,47 @@ if uploaded_file:
                         )
                     if not cleaned_results and not fit_results:
                         st.error("No data could be processed.")
+
+            elif mode == "Parametric Fitting":
+                st.subheader("Parametric and Path Fitting")
+                st.markdown("This mode treats data as parametric curves or paths (non-functional, preserves point order). Generates smoothed/interpolated points along the curve/path.")
+                
+                # Re-parse without sorting or averaging for parametric modes
+                lines_param, skipped_param = parse_excel(uploaded_file, average_duplicates=False, sort_by_x=False)
+                if not lines_param:
+                    st.error("No valid lines found for parametric fitting.")
+                else:
+                    st.success(f"Found {len(lines_param)} valid lines for parametric fitting.")
+                    if skipped_param:
+                        st.warning(f"Warnings for some lines: {', '.join(skipped_param)}")
+                
+                # Get parameters
+                params = parametric_ui()
+                
+                if st.button("Generate and Plot Parametric Data"):
+                    parametric_results = generate_parametric_data(lines_param, params)
+                    sub_mode = params['sub_mode']
+                    
+                    st.subheader("Parametric Results")
+                    for line_name, x_smooth, y_smooth, error_message in parametric_results:
+                        if error_message:
+                            st.warning(f"Line '{line_name}': {error_message}")
+                        else:
+                            # Get original x, y from lines_param
+                            orig_line = next((l for l in lines_param if l[0] == line_name), None)
+                            if orig_line:
+                                orig_x, orig_y = orig_line[1], orig_line[2]
+                                fig = plot_parametric(orig_x, orig_y, x_smooth, y_smooth, sub_mode)
+                                st.pyplot(fig)
+                    
+                    if parametric_results:
+                        output = create_parametric_excel(parametric_results)
+                        st.download_button(
+                            label="Download Parametric Data Excel",
+                            data=output,
+                            file_name=f"{sub_mode.lower().replace(' ', '_')}_parametric_data.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
