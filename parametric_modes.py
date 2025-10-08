@@ -48,7 +48,6 @@ def generate_parametric_data(lines, params):
             sub_mode = params['sub_mode']
             
             if sub_mode == "Parametric Spline" or sub_mode == "Bezier Spline":  # Bezier-like using B-spline
-                # Parameterize with normalized u
                 u = np.linspace(0, 1, n)
                 tck, _ = splprep([x, y], u=u, s=0, k=3)  # Cubic spline interpolation
                 u_new = np.linspace(0, 1, n_points)
@@ -56,7 +55,6 @@ def generate_parametric_data(lines, params):
                 results.append((line_name, x_smooth, y_smooth, None))
             
             elif sub_mode == "Path Interpolation":
-                # Arc-length parameterization
                 points = np.column_stack((x, y))
                 segments = np.diff(points, axis=0)
                 lengths = np.linalg.norm(segments, axis=1)
@@ -88,20 +86,29 @@ def generate_parametric_data(lines, params):
                 results.append((line_name, np.array(x_smooth), np.array(y_smooth), None))
             
             elif sub_mode == "Gaussian Process":
-                # Fit separate GPs for x(t) and y(t)
                 t = np.linspace(0, 1, n).reshape(-1, 1)
                 length_scale = params.get('length_scale', 1.0)
-                kernel = ConstantKernel() * RBF(length_scale=length_scale)
+                kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
                 
-                gp_x = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
+                # Check for variation in data
+                if np.allclose(x[1:] - x[:-1], 0) or np.allclose(y[1:] - y[:-1], 0):
+                    results.append((line_name, None, None, "Insufficient variation in data"))
+                    continue
+                
+                gp_x = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, normalize_y=True)
                 gp_x.fit(t, x)
                 
-                gp_y = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10)
+                gp_y = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, normalize_y=True)
                 gp_y.fit(t, y)
                 
                 t_new = np.linspace(0, 1, n_points).reshape(-1, 1)
                 x_smooth = gp_x.predict(t_new)
                 y_smooth = gp_y.predict(t_new)
+                
+                # Handle potential NaN or inf values
+                if np.any(np.isnan(x_smooth)) or np.any(np.isnan(y_smooth)) or np.any(np.isinf(x_smooth)) or np.any(np.isinf(y_smooth)):
+                    results.append((line_name, None, None, "Prediction resulted in NaN or infinite values"))
+                    continue
                 
                 results.append((line_name, x_smooth, y_smooth, None))
         
