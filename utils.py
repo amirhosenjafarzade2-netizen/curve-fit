@@ -10,7 +10,18 @@ from scipy.ndimage import gaussian_filter1d
 from statsmodels.nonparametric.smoothers_lowess import lowess
 import pywt
 
-def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
+def parse_excel(uploaded_file, min_points=2, average_duplicates=True, sort_by_x=True):
+    """
+    Parse Excel file to extract line data.
+    Args:
+        uploaded_file: Excel file object
+        min_points: Minimum number of valid points required for a line
+        average_duplicates: If True, average y-values for duplicate x-values
+        sort_by_x: If True, sort data by x-values (for functional modes); if False, preserve original order (for parametric modes)
+    Returns:
+        lines: List of tuples (line_name, x_data, y_data, has_duplicates, has_invalid_x)
+        skipped_lines: List of line names skipped due to issues
+    """
     try:
         df = pd.read_excel(uploaded_file, header=None, engine='openpyxl')
     except Exception as e:
@@ -49,8 +60,10 @@ def parse_excel(uploaded_file, min_points=2, average_duplicates=True):
                     has_duplicates = len(x_data) != len(np.unique(x_data))
                 else:
                     has_duplicates = len(np.unique(x_data)) != len(x_data)
-                # Sort by x
-                x_data, y_data = zip(*sorted(zip(x_data, y_data)))
+                # Sort by x only if requested (for functional modes)
+                if sort_by_x:
+                    sorted_data = sorted(zip(x_data, y_data))
+                    x_data, y_data = zip(*sorted_data) if sorted_data else ([], [])
                 x_data = np.array(x_data)
                 y_data = np.array(y_data)
                 if has_duplicates and not average_duplicates:
