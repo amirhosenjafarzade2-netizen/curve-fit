@@ -1,11 +1,7 @@
-# parametric_modes.py - Module for parametric and path-based fitting modes
-
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel
 import pandas as pd
 import io
 
@@ -15,12 +11,9 @@ def parametric_ui():
     Returns: Dictionary of parameters including sub_mode and n_points
     """
     params = {}
-    sub_mode_options = ["Parametric Spline", "Path Interpolation", "Bezier Spline", "Gaussian Process"]
+    sub_mode_options = ["Parametric Spline", "Path Interpolation", "Bezier Spline"]
     params['sub_mode'] = st.selectbox("Choose Parametric Sub-Mode", sub_mode_options)
     params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10)
-    
-    if params['sub_mode'] == "Gaussian Process":
-        params['length_scale'] = st.slider("RBF Length Scale", min_value=0.1, max_value=10.0, value=1.0, step=0.1)
     
     return params
 
@@ -84,33 +77,6 @@ def generate_parametric_data(lines, params):
                     y_smooth.append(p[1])
                 
                 results.append((line_name, np.array(x_smooth), np.array(y_smooth), None))
-            
-            elif sub_mode == "Gaussian Process":
-                t = np.linspace(0, 1, n).reshape(-1, 1)
-                length_scale = params.get('length_scale', 1.0)
-                kernel = ConstantKernel(1.0) * RBF(length_scale=length_scale)
-                
-                # Check for variation in data
-                if np.allclose(x[1:] - x[:-1], 0) or np.allclose(y[1:] - y[:-1], 0):
-                    results.append((line_name, None, None, "Insufficient variation in data"))
-                    continue
-                
-                gp_x = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, normalize_y=True)
-                gp_x.fit(t, x)
-                
-                gp_y = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=10, normalize_y=True)
-                gp_y.fit(t, y)
-                
-                t_new = np.linspace(0, 1, n_points).reshape(-1, 1)
-                x_smooth = gp_x.predict(t_new)
-                y_smooth = gp_y.predict(t_new)
-                
-                # Handle potential NaN or inf values
-                if np.any(np.isnan(x_smooth)) or np.any(np.isnan(y_smooth)) or np.any(np.isinf(x_smooth)) or np.any(np.isinf(y_smooth)):
-                    results.append((line_name, None, None, "Prediction resulted in NaN or infinite values"))
-                    continue
-                
-                results.append((line_name, x_smooth, y_smooth, None))
         
         except Exception as e:
             results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}"))
@@ -159,3 +125,40 @@ def create_parametric_excel(results):
             row += 1  # Empty row between lines
     output.seek(0)
     return output
+
+def compare_parametric_modes(lines, n_points=200):
+    """
+    Compare all parametric sub-modes and display their smoothed curves for each line.
+    Args:
+        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
+        n_points: Number of smoothed points (default 200)
+    """
+    st.subheader("Parametric Visual Comparison")
+    st.markdown("This mode compares all parametric sub-modes with default parameters for visual inspection.")
+    
+    # Define parametric methods with default params
+    param_methods = [
+        ("Parametric Spline", {"n_points": n_points}),
+        ("Path Interpolation", {"n_points": n_points}),
+        ("Bezier Spline", {"n_points": n_points})
+    ]
+    
+    results = {}
+    for method, method_params in param_methods:
+        method_params['sub_mode'] = method
+        results[method] = generate_parametric_data(lines, method_params)
+    
+    for line_name, x, y, _, _ in lines:
+        st.markdown(f"### Line: {line_name}")
+        if len(x) < 2:
+            st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 2).")
+            continue
+        for method, method_params in param_methods:
+            result = next((r for r in results[method] if r[0] == line_name), None)
+            if result and result[3] is None:
+                x_smooth, y_smooth = result[1], result[2]
+                st.write(f"{method} Fit")
+                fig = plot_parametric(x, y, x_smooth, y_smooth, method)
+                st.pyplot(fig)
+            else:
+                st.warning(f"Line '{line_name}' - {method}: {result[3] if result else 'No result'}")
