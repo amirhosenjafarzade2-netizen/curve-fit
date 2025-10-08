@@ -460,45 +460,50 @@ if uploaded_file:
                         st.error("No data could be processed.")
 
             elif mode == "Parametric Fitting":
-                st.subheader("Parametric and Path Fitting")
-                st.markdown("This mode treats data as parametric curves or paths (non-functional, preserves point order). Generates smoothed/interpolated points along the curve/path.")
-                
-                # Re-parse without sorting or averaging for parametric modes
-                lines_param, skipped_param = parse_excel(uploaded_file, average_duplicates=False, sort_by_x=False)
-                if not lines_param:
-                    st.error("No valid lines found for parametric fitting.")
+    st.subheader("Parametric and Path Fitting")
+    st.markdown("This mode treats data as parametric curves or paths (non-functional, preserves point order). Generates smoothed/interpolated points along the curve/path.")
+    
+    # Re-parse without sorting or averaging for parametric modes
+    lines_param, skipped_param = parse_excel(uploaded_file, average_duplicates=False, sort_by_x=False)
+    if not lines_param:
+        st.error("No valid lines found for parametric fitting.")
+    else:
+        st.success(f"Found {len(lines_param)} valid lines for parametric fitting.")
+        if skipped_param:
+            st.warning(f"Warnings for some lines: {', '.join(skipped_param)}")
+    
+    # Option for visual comparison
+    compare_parametric = st.checkbox("Enable Parametric Visual Comparison", value=False)
+    
+    # Get parameters
+    params = parametric_ui()
+    
+    if compare_parametric:
+        compare_parametric_modes(lines_param)
+    else:
+        if st.button("Generate and Plot Parametric Data"):
+            parametric_results = generate_parametric_data(lines_param, params)
+            sub_mode = params['sub_mode']
+            
+            st.subheader("Parametric Results")
+            for line_name, x_smooth, y_smooth, error_message in parametric_results:
+                if error_message:
+                    st.warning(f"Line '{line_name}': {error_message}")
                 else:
-                    st.success(f"Found {len(lines_param)} valid lines for parametric fitting.")
-                    if skipped_param:
-                        st.warning(f"Warnings for some lines: {', '.join(skipped_param)}")
-                
-                # Get parameters
-                params = parametric_ui()
-                
-                if st.button("Generate and Plot Parametric Data"):
-                    parametric_results = generate_parametric_data(lines_param, params)
-                    sub_mode = params['sub_mode']
-                    
-                    st.subheader("Parametric Results")
-                    for line_name, x_smooth, y_smooth, error_message in parametric_results:
-                        if error_message:
-                            st.warning(f"Line '{line_name}': {error_message}")
-                        else:
-                            # Get original x, y from lines_param
-                            orig_line = next((l for l in lines_param if l[0] == line_name), None)
-                            if orig_line:
-                                orig_x, orig_y = orig_line[1], orig_line[2]
-                                fig = plot_parametric(orig_x, orig_y, x_smooth, y_smooth, sub_mode)
-                                st.pyplot(fig)
-                    
-                    if parametric_results:
-                        output = create_parametric_excel(parametric_results)
-                        st.download_button(
-                            label="Download Parametric Data Excel",
-                            data=output,
-                            file_name=f"{sub_mode.lower().replace(' ', '_')}_parametric_data.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        )
+                    orig_line = next((l for l in lines_param if l[0] == line_name), None)
+                    if orig_line:
+                        orig_x, orig_y = orig_line[1], orig_line[2]
+                        fig = plot_parametric(orig_x, orig_y, x_smooth, y_smooth, sub_mode)
+                        st.pyplot(fig)
+            
+            if parametric_results:
+                output = create_parametric_excel(parametric_results)
+                st.download_button(
+                    label="Download Parametric Data Excel",
+                    data=output,
+                    file_name=f"{sub_mode.lower().replace(' ', '_')}_parametric_data.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
