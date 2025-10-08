@@ -8,12 +8,14 @@ import io
 def parametric_ui():
     """
     Render UI for Parametric Fitting mode.
-    Returns: Dictionary of parameters including sub_mode and n_points
+    Returns: Dictionary of parameters including sub_mode, n_points, and smoothness
     """
     params = {}
     sub_mode_options = ["Parametric Spline", "Path Interpolation", "Bezier Spline"]
     params['sub_mode'] = st.selectbox("Choose Parametric Sub-Mode", sub_mode_options)
     params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10)
+    params['smoothness'] = st.slider("Smoothness (higher values reduce overfitting)", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+                                    help="For Parametric/Bezier Spline: Controls smoothing (0 = exact fit, higher = smoother). For Path Interpolation: Affects point density indirectly.")
     
     return params
 
@@ -22,11 +24,12 @@ def generate_parametric_data(lines, params):
     Generate smoothed parametric data for each line using the specified sub-mode.
     Args:
         lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x) - but ignores duplicates/invalid for parametric
-        params: Parameters including sub_mode and n_points
+        params: Parameters including sub_mode, n_points, and smoothness
     Returns: List of (line_name, x_smooth, y_smooth, error_message)
     """
     results = []
     n_points = params['n_points']
+    smoothness = params['smoothness']
 
     for line_name, x, y, _, _ in lines:
         x = np.array(x)
@@ -42,7 +45,7 @@ def generate_parametric_data(lines, params):
             
             if sub_mode == "Parametric Spline" or sub_mode == "Bezier Spline":  # Bezier-like using B-spline
                 u = np.linspace(0, 1, n)
-                tck, _ = splprep([x, y], u=u, s=0, k=3)  # Cubic spline interpolation
+                tck, _ = splprep([x, y], u=u, s=smoothness, k=3)  # Cubic spline with adjustable smoothness
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
                 results.append((line_name, x_smooth, y_smooth, None))
@@ -58,7 +61,9 @@ def generate_parametric_data(lines, params):
                     results.append((line_name, None, None, "Zero path length"))
                     continue
                 
-                dist_new = np.linspace(0, total_len, n_points)
+                # Adjust n_points based on smoothness for Path Interpolation (higher smoothness reduces points)
+                adjusted_n_points = max(10, int(n_points * (1 - smoothness / 10)))
+                dist_new = np.linspace(0, total_len, adjusted_n_points)
                 cumlen_with0 = np.insert(cumlen, 0, 0)
                 x_smooth = []
                 y_smooth = []
@@ -138,9 +143,9 @@ def compare_parametric_modes(lines, n_points=200):
     
     # Define parametric methods with default params
     param_methods = [
-        ("Parametric Spline", {"n_points": n_points}),
-        ("Path Interpolation", {"n_points": n_points}),
-        ("Bezier Spline", {"n_points": n_points})
+        ("Parametric Spline", {"n_points": n_points, "smoothness": 0.0}),
+        ("Path Interpolation", {"n_points": n_points, "smoothness": 0.0}),
+        ("Bezier Spline", {"n_points": n_points, "smoothness": 0.0})
     ]
     
     results = {}
