@@ -1,65 +1,4 @@
-def compare_parametric_modes(lines, n_points=200):
-    """
-    Compare all parametric sub-modes and display their smoothed curves for each line.
-    Args:
-        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
-        n_points: Number of smoothed points (default 200)
-    """
-    st.subheader("Parametric Visual Comparison")
-    st.markdown("This mode compares all parametric sub-modes with default parameters for visual inspection.")
-    
-    # Define parametric methods with default params
-    param_methods = [
-        ("Parametric Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("Path Interpolation", {"n_points": n_points, "smoothness": 0.0}),
-        ("Bezier Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("Catmull-Rom Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("Cubic Hermite Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("NURBS (Non-Uniform Rational B-Spline)", {"n_points": n_points, "smoothness": 0.0}),
-        ("Akima Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("PCHIP (Piecewise Cubic Hermite)", {"n_points": n_points, "smoothness": 0.0})
-    ]
-    
-    results = {}
-    for method, method_params in param_methods:
-        method_params['sub_mode'] = method
-        results[method] = generate_parametric_data(lines, method_params)
-    
-    # Create comparison table
-    comparison_data = []
-    for method, method_params in param_methods:
-        for result in results[method]:
-            line_name, x_smooth, y_smooth, error_message, fit_metrics = result
-            if fit_metrics:
-                comparison_data.append({
-                    'Line': line_name,
-                    'Method': method,
-                    'Fit Score': f"{fit_metrics['fit_score']:.2f}",
-                    'Avg Distance': f"{fit_metrics['avg_distance']:.4f}",
-                    'RMSE': f"{fit_metrics['rmse']:.4f}",
-                    'NRMSE (%)': f"{fit_metrics['nrmse']:.2f}",
-                    'R² Analog': f"{fit_metrics['r2_analog']:.4f}"
-                })
-    
-    if comparison_data:
-        st.subheader("Fit Quality Comparison Table")
-        comparison_df = pd.DataFrame(comparison_data)
-        st.dataframe(comparison_df, use_container_width=True)
-    
-    for line_name, x, y, _, _ in lines:
-        st.markdown(f"### Line: {line_name}")
-        if len(x) < 2:
-            st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 2).")
-            continue
-        for method, method_params in param_methods:
-            result = next((r for r in results[method] if r[0] == line_name), None)
-            if result and result[3] is None:
-                x_smooth, y_smooth, fit_metrics = result[1], result[2], result[4]
-                st.write(f"{method} Fit")
-                fig = plot_parametric(x, y, x_smooth, y_smooth, method, fit_metrics)
-                st.pyplot(fig)
-            else:
-                st.warning(f"Line '{line_name}' - {method}: {result[3] if result else 'No result'}")import streamlit as st
+import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev, Akima1DInterpolator, PchipInterpolator, CubicHermiteSpline
@@ -404,6 +343,27 @@ def compare_parametric_modes(lines, n_points=200):
         method_params['sub_mode'] = method
         results[method] = generate_parametric_data(lines, method_params)
     
+    # Create comparison table
+    comparison_data = []
+    for method, method_params in param_methods:
+        for result in results[method]:
+            line_name, x_smooth, y_smooth, error_message, fit_metrics = result
+            if fit_metrics:
+                comparison_data.append({
+                    'Line': line_name,
+                    'Method': method,
+                    'Fit Score': f"{fit_metrics['fit_score']:.2f}",
+                    'Avg Distance': f"{fit_metrics['avg_distance']:.4f}",
+                    'RMSE': f"{fit_metrics['rmse']:.4f}",
+                    'NRMSE (%)': f"{fit_metrics['nrmse']:.2f}",
+                    'R² Analog': f"{fit_metrics['r2_analog']:.4f}"
+                })
+    
+    if comparison_data:
+        st.subheader("Fit Quality Comparison Table")
+        comparison_df = pd.DataFrame(comparison_data)
+        st.dataframe(comparison_df, use_container_width=True)
+    
     for line_name, x, y, _, _ in lines:
         st.markdown(f"### Line: {line_name}")
         if len(x) < 2:
@@ -412,9 +372,9 @@ def compare_parametric_modes(lines, n_points=200):
         for method, method_params in param_methods:
             result = next((r for r in results[method] if r[0] == line_name), None)
             if result and result[3] is None:
-                x_smooth, y_smooth = result[1], result[2]
+                x_smooth, y_smooth, fit_metrics = result[1], result[2], result[4]
                 st.write(f"{method} Fit")
-                fig = plot_parametric(x, y, x_smooth, y_smooth, method)
+                fig = plot_parametric(x, y, x_smooth, y_smooth, method, fit_metrics)
                 st.pyplot(fig)
             else:
                 st.warning(f"Line '{line_name}' - {method}: {result[3] if result else 'No result'}")
