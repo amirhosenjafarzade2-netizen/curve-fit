@@ -237,8 +237,8 @@ def plot_parametric(x, y, x_smooth, y_smooth, sub_mode, fit_metrics=None):
     """
     fig, ax = plt.subplots(figsize=(10, 8))
     if x_smooth is not None and y_smooth is not None:
-        ax.plot(x_smooth, y_smooth, color='red', label=f'Smoothed {sub_mode}', linewidth=3, zorder=5)
-    ax.scatter(x, y, color='blue', label='Original Points', s=30, zorder=3, alpha=1.0, edgecolors='black', linewidth=0.5)
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Smoothed {sub_mode}', linewidth=1.5, zorder=5)
+    ax.scatter(x, y, color='blue', label='Original Points', s=50, zorder=3, alpha=1.0)
     ax.set_xlabel('X', fontsize=12)
     ax.set_ylabel('Y', fontsize=12)
     ax.set_aspect('equal')
