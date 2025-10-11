@@ -13,7 +13,7 @@ def parametric_ui():
     params = {}
     sub_mode_options = ["Parametric Spline", "Path Interpolation", "Bezier Spline"]
     params['sub_mode'] = st.selectbox("Choose Parametric Sub-Mode", sub_mode_options)
-    params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10, key="n_points_input")
+    params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10)
     params['smoothness'] = st.slider("Smoothness (higher values reduce overfitting)", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
                                     help="For Parametric/Bezier Spline: Controls smoothing (0 = exact fit, higher = smoother). For Path Interpolation: Affects point density indirectly.")
     return params
@@ -22,7 +22,7 @@ def generate_parametric_data(lines, params):
     """
     Generate smoothed parametric data for each line using the specified sub-mode.
     Args:
-        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
+        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x) - but ignores duplicates/invalid for parametric
         params: Parameters including sub_mode, n_points, and smoothness
     Returns: List of (line_name, x_smooth, y_smooth, error_message)
     """
@@ -41,15 +41,16 @@ def generate_parametric_data(lines, params):
         
         # Check for duplicate x-values
         if has_duplicates or len(np.unique(x)) < len(x):
-            results.append((line_name, None, None, "Duplicate x-values detected, which may affect spline-based methods"))
-            continue
+            if params['sub_mode'] in ["Parametric Spline", "Bezier Spline"]:
+                results.append((line_name, None, None, "Duplicate x-values detected, which may affect spline-based methods"))
+                continue
         
         try:
             sub_mode = params['sub_mode']
             
-            if sub_mode == "Parametric Spline" or sub_mode == "Bezier Spline":
+            if sub_mode == "Parametric Spline" or sub_mode == "Bezier Spline":  # Bezier-like using B-spline
                 u = np.linspace(0, 1, n)
-                tck, _ = splprep([x, y], u=u, s=smoothness, k=3)
+                tck, _ = splprep([x, y], u=u, s=smoothness, k=3)  # Cubic spline with adjustable smoothness
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
                 results.append((line_name, x_smooth, y_smooth, None))
@@ -65,7 +66,9 @@ def generate_parametric_data(lines, params):
                     results.append((line_name, None, None, "Zero path length"))
                     continue
                 
-                dist_new = np.linspace(0, total_len, n_points)  # Use exact n_points
+                # Adjust n_points based on smoothness for Path Interpolation (higher smoothness reduces points)
+                adjusted_n_points = max(10, int(n_points * (1 - smoothness / 10)))
+                dist_new = np.linspace(0, total_len, adjusted_n_points)
                 cumlen_with0 = np.insert(cumlen, 0, 0)
                 x_smooth = []
                 y_smooth = []
@@ -83,9 +86,7 @@ def generate_parametric_data(lines, params):
                     x_smooth.append(p[0])
                     y_smooth.append(p[1])
                 
-                x_smooth = np.array(x_smooth)
-                y_smooth = np.array(y_smooth)
-                results.append((line_name, x_smooth, y_smooth, None))
+                results.append((line_name, np.array(x_smooth), np.array(y_smooth), None))
         
         except Exception as e:
             results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}"))
@@ -135,24 +136,26 @@ def create_parametric_excel(results):
     output.seek(0)
     return output
 
-def compare_parametric_modes(lines, params):
+def compare_parametric_modes(lines, n_points=200):
     """
-    Compare all parametric sub-modes using parameters from parametric_ui.
+    Compare all parametric sub-modes and display their smoothed curves for each line.
     Args:
         lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
-        params: Parameters from parametric_ui
+        n_points: Number of smoothed points (default 200)
     """
     st.subheader("Parametric Visual Comparison")
-    st.markdown("This mode compares all parametric sub-modes with user-specified parameters.")
+    st.markdown("This mode compares all parametric sub-modes with default parameters for visual inspection.")
     
+    # Define parametric methods with default params
     param_methods = [
-        ("Parametric Spline", {"n_points": params['n_points'], "smoothness": params['smoothness'], "sub_mode": "Parametric Spline"}),
-        ("Path Interpolation", {"n_points": params['n_points'], "smoothness": params['smoothness'], "sub_mode": "Path Interpolation"}),
-        ("Bezier Spline", {"n_points": params['n_points'], "smoothness": params['smoothness'], "sub_mode": "Bezier Spline"})
+        ("Parametric Spline", {"n_points": n_points, "smoothness": 0.0}),
+        ("Path Interpolation", {"n_points": n_points, "smoothness": 0.0}),
+        ("Bezier Spline", {"n_points": n_points, "smoothness": 0.0})
     ]
     
     results = {}
     for method, method_params in param_methods:
+        method_params['sub_mode'] = method
         results[method] = generate_parametric_data(lines, method_params)
     
     for line_name, x, y, _, _ in lines:
@@ -160,7 +163,7 @@ def compare_parametric_modes(lines, params):
         if len(x) < 2:
             st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 2).")
             continue
-        for method, _ in param_methods:
+        for method, method_params in param_methods:
             result = next((r for r in results[method] if r[0] == line_name), None)
             if result and result[3] is None:
                 x_smooth, y_smooth = result[1], result[2]
@@ -197,7 +200,7 @@ def main():
     
     # Button to trigger comparison
     if st.button("Compare Parametric Modes"):
-        compare_parametric_modes(lines_param, params)
+        compare_parametric_modes(lines_param)
 
 if __name__ == "__main__":
     main()
