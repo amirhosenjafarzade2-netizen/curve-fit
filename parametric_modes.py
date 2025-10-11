@@ -30,13 +30,18 @@ def generate_parametric_data(lines, params):
     n_points = params['n_points']
     smoothness = params['smoothness']
 
-    for line_name, x, y, _, _ in lines:
+    for line_name, x, y, has_duplicates, has_invalid_x in lines:
         x = np.array(x)
         y = np.array(y)
         n = len(x)
         
         if n < 2:
             results.append((line_name, None, None, "Insufficient points (need at least 2)"))
+            continue
+        
+        # Check for duplicate x-values
+        if has_duplicates or len(np.unique(x)) < len(x):
+            results.append((line_name, None, None, "Duplicate x-values detected, which may affect spline-based methods"))
             continue
         
         try:
