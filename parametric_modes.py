@@ -16,7 +16,6 @@ def parametric_ui():
     params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10, key="n_points_input")
     params['smoothness'] = st.slider("Smoothness (higher values reduce overfitting)", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
                                     help="For Parametric/Bezier Spline: Controls smoothing (0 = exact fit, higher = smoother). For Path Interpolation: Affects point density indirectly.")
-    st.write(f"Selected n_points: {params['n_points']}")  # Debug output
     return params
 
 def generate_parametric_data(lines, params):
@@ -49,7 +48,6 @@ def generate_parametric_data(lines, params):
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
                 results.append((line_name, x_smooth, y_smooth, None))
-                st.write(f"Line {line_name}: Generated {len(x_smooth)} smoothed points")  # Debug output
             
             elif sub_mode == "Path Interpolation":
                 points = np.column_stack((x, y))
@@ -83,7 +81,6 @@ def generate_parametric_data(lines, params):
                 x_smooth = np.array(x_smooth)
                 y_smooth = np.array(y_smooth)
                 results.append((line_name, x_smooth, y_smooth, None))
-                st.write(f"Line {line_name}: Generated {len(x_smooth)} smoothed points")  # Debug output
         
         except Exception as e:
             results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}"))
@@ -99,7 +96,6 @@ def plot_parametric(x, y, x_smooth, y_smooth, sub_mode):
     ax.scatter(x, y, color='blue', label='Original Points', s=50)
     if x_smooth is not None and y_smooth is not None:
         ax.plot(x_smooth, y_smooth, color='red', label=f'Smoothed {sub_mode}')
-        st.write(f"Number of smoothed points plotted: {len(x_smooth)}")  # Debug output
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
     ax.set_aspect('equal')
@@ -144,12 +140,10 @@ def compare_parametric_modes(lines, params):
     st.subheader("Parametric Visual Comparison")
     st.markdown("This mode compares all parametric sub-modes with user-specified parameters.")
     
-    n_points = params['n_points']
-    smoothness = params['smoothness']
     param_methods = [
-        ("Parametric Spline", {"n_points": n_points, "smoothness": smoothness, "sub_mode": "Parametric Spline"}),
-        ("Path Interpolation", {"n_points": n_points, "smoothness": smoothness, "sub_mode": "Path Interpolation"}),
-        ("Bezier Spline", {"n_points": n_points, "smoothness": smoothness, "sub_mode": "Bezier Spline"})
+        ("Parametric Spline", {"n_points": params['n_points'], "smoothness": params['smoothness'], "sub_mode": "Parametric Spline"}),
+        ("Path Interpolation", {"n_points": params['n_points'], "smoothness": params['smoothness'], "sub_mode": "Path Interpolation"}),
+        ("Bezier Spline", {"n_points": params['n_points'], "smoothness": params['smoothness'], "sub_mode": "Bezier Spline"})
     ]
     
     results = {}
@@ -177,25 +171,28 @@ def main():
     """
     st.title("Parametric Fitting App")
     params = parametric_ui()
-    # Example input data
-    lines = [
+    # Replace with your actual data source for lines_param
+    lines_param = [
         ("Line1", [0, 1, 2, 3], [0, 1, 4, 9], False, False),
         ("Line2", [0, 1, 2], [0, 2, 0], False, False)
     ]
     
     # Generate and plot smoothed data
-    results = generate_parametric_data(lines, params)
+    results = generate_parametric_data(lines_param, params)
     for line_name, x_smooth, y_smooth, error_message in results:
         if error_message:
             st.error(f"Line '{line_name}': {error_message}")
             continue
         st.markdown(f"### Line: {line_name}")
-        st.write(f"Number of smoothed points: {len(x_smooth)}")
-        fig = plot_parametric(lines[0][1], lines[0][2], x_smooth, y_smooth, params['sub_mode'])
-        st.pyplot(fig)
+        # Find the original x, y for this line
+        line_data = next((line for line in lines_param if line[0] == line_name), None)
+        if line_data:
+            fig = plot_parametric(line_data[1], line_data[2], x_smooth, y_smooth, params['sub_mode'])
+            st.pyplot(fig)
     
-    # Compare modes
-    compare_parametric_modes(lines, params)
+    # Button to trigger comparison
+    if st.button("Compare Parametric Modes"):
+        compare_parametric_modes(lines_param, params)
 
 if __name__ == "__main__":
     main()
