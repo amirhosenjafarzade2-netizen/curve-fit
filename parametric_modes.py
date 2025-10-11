@@ -236,13 +236,13 @@ def plot_parametric(x, y, x_smooth, y_smooth, sub_mode, fit_metrics=None):
     Returns: Matplotlib figure
     """
     fig, ax = plt.subplots(figsize=(10, 8))
-    ax.scatter(x, y, color='blue', label='Original Points', s=50, zorder=3)
     if x_smooth is not None and y_smooth is not None:
         ax.plot(x_smooth, y_smooth, color='red', label=f'Smoothed {sub_mode}', linewidth=2, zorder=2)
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
+    ax.scatter(x, y, color='blue', label='Original Points', s=50, zorder=3, alpha=0.7)
+    ax.set_xlabel('X', fontsize=12)
+    ax.set_ylabel('Y', fontsize=12)
     ax.set_aspect('equal')
-    ax.legend()
+    ax.legend(fontsize=10)
     ax.grid(True, alpha=0.3)
     
     # Add fit metrics as text box
