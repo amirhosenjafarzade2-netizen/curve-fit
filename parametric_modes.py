@@ -64,30 +64,36 @@ def calculate_fit_metrics(x_orig, y_orig, x_smooth, y_smooth):
         'fit_score': fit_score
     }
 
-def generate_parametric_data(lines, params, include_metrics=True):
+def generate_parametric_data(lines, params):
     """
-    Generate smoothed parametric data for each line using the specified sub-mode.
+    Generate smoothed parametric data for each line using the specified sub_mode.
     Args:
-        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x) - but ignores duplicates/invalid for parametric
+        lines: List of tuples - can be either:
+               (line_name, x, y, has_duplicates) - 4 values
+               (line_name, x, y, has_duplicates, has_invalid_x) - 5 values
         params: Parameters including sub_mode, n_points, and smoothness
-        include_metrics: If True, returns fit_metrics; if False, returns None for backward compatibility
-    Returns: List of (line_name, x_smooth, y_smooth, error_message, fit_metrics) if include_metrics=True
-             List of (line_name, x_smooth, y_smooth, error_message) if include_metrics=False
+    Returns: List of (line_name, x_smooth, y_smooth, error_message, fit_metrics)
     """
     results = []
     n_points = int(params['n_points'])  # Ensure it's an integer
     smoothness = params['smoothness']
 
-    for line_name, x, y, _, _ in lines:
+    for line_data in lines:
+        # Handle both 4-value and 5-value tuple formats
+        if len(line_data) == 4:
+            line_name, x, y, _ = line_data
+        elif len(line_data) == 5:
+            line_name, x, y, _, _ = line_data
+        else:
+            # Fallback: assume first 3 are name, x, y
+            line_name, x, y = line_data[0], line_data[1], line_data[2]
+        
         x = np.array(x)
         y = np.array(y)
         n = len(x)
         
         if n < 2:
-            if include_metrics:
-                results.append((line_name, None, None, "Insufficient points (need at least 2)", None))
-            else:
-                results.append((line_name, None, None, "Insufficient points (need at least 2)"))
+            results.append((line_name, None, None, "Insufficient points (need at least 2)", None))
             continue
         
         try:
@@ -98,37 +104,25 @@ def generate_parametric_data(lines, params, include_metrics=True):
                 tck, _ = splprep([x, y], u=u, s=smoothness, k=3)  # Cubic spline with adjustable smoothness
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
-                    results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
-                else:
-                    results.append((line_name, x_smooth, y_smooth, None))
+                fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+                results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
             
             elif sub_mode == "Catmull-Rom Spline":
                 # Catmull-Rom spline: passes through all points with smooth tangents
                 if n < 4:
-                    if include_metrics:
-                        results.append((line_name, None, None, "Catmull-Rom needs at least 4 points", None))
-                    else:
-                        results.append((line_name, None, None, "Catmull-Rom needs at least 4 points"))
+                    results.append((line_name, None, None, "Catmull-Rom needs at least 4 points", None))
                     continue
                 u = np.linspace(0, 1, n)
                 tck, _ = splprep([x, y], u=u, s=smoothness, k=min(3, n-1))
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
-                    results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
-                else:
-                    results.append((line_name, x_smooth, y_smooth, None))
+                fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+                results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
             
             elif sub_mode == "Cubic Hermite Spline":
                 # Cubic Hermite: interpolates with specified derivatives
                 if n < 2:
-                    if include_metrics:
-                        results.append((line_name, None, None, "Need at least 2 points", None))
-                    else:
-                        results.append((line_name, None, None, "Need at least 2 points"))
+                    results.append((line_name, None, None, "Need at least 2 points", None))
                     continue
                 t = np.linspace(0, 1, n)
                 # Estimate derivatives using finite differences
@@ -144,38 +138,26 @@ def generate_parametric_data(lines, params, include_metrics=True):
                 hermite_y = CubicHermiteSpline(t, y, dy)
                 x_smooth = hermite_x(t_new)
                 y_smooth = hermite_y(t_new)
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
-                    results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
-                else:
-                    results.append((line_name, x_smooth, y_smooth, None))
+                fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+                results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
             
             elif sub_mode == "NURBS (Non-Uniform Rational B-Spline)":
                 # NURBS approximation using weighted B-spline
                 if n < 4:
-                    if include_metrics:
-                        results.append((line_name, None, None, "NURBS needs at least 4 points", None))
-                    else:
-                        results.append((line_name, None, None, "NURBS needs at least 4 points"))
+                    results.append((line_name, None, None, "NURBS needs at least 4 points", None))
                     continue
                 u = np.linspace(0, 1, n)
                 weights = np.ones(n)  # Uniform weights (can be modified for emphasis)
                 tck, _ = splprep([x, y], u=u, w=weights, s=smoothness, k=3)
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
-                    results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
-                else:
-                    results.append((line_name, x_smooth, y_smooth, None))
+                fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+                results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
             
             elif sub_mode == "Akima Spline":
                 # Akima spline: avoids overshooting, good for sharp curves
                 if n < 3:
-                    if include_metrics:
-                        results.append((line_name, None, None, "Akima needs at least 3 points", None))
-                    else:
-                        results.append((line_name, None, None, "Akima needs at least 3 points"))
+                    results.append((line_name, None, None, "Akima needs at least 3 points", None))
                     continue
                 # If smoothness > 0, pre-smooth the data before Akima interpolation
                 if smoothness > 0:
@@ -193,19 +175,13 @@ def generate_parametric_data(lines, params, include_metrics=True):
                 t_new = np.linspace(0, 1, n_points)
                 x_smooth = akima_x(t_new)
                 y_smooth = akima_y(t_new)
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
-                    results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
-                else:
-                    results.append((line_name, x_smooth, y_smooth, None))
+                fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+                results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
             
             elif sub_mode == "PCHIP (Piecewise Cubic Hermite)":
                 # PCHIP: preserves monotonicity and shape, no overshooting
                 if n < 2:
-                    if include_metrics:
-                        results.append((line_name, None, None, "PCHIP needs at least 2 points", None))
-                    else:
-                        results.append((line_name, None, None, "PCHIP needs at least 2 points"))
+                    results.append((line_name, None, None, "PCHIP needs at least 2 points", None))
                     continue
                 # If smoothness > 0, pre-smooth the data before PCHIP interpolation
                 if smoothness > 0:
@@ -223,11 +199,8 @@ def generate_parametric_data(lines, params, include_metrics=True):
                 t_new = np.linspace(0, 1, n_points)
                 x_smooth = pchip_x(t_new)
                 y_smooth = pchip_y(t_new)
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
-                    results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
-                else:
-                    results.append((line_name, x_smooth, y_smooth, None))
+                fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+                results.append((line_name, x_smooth, y_smooth, None, fit_metrics))
             
             elif sub_mode == "Path Interpolation":
                 points = np.column_stack((x, y))
@@ -237,10 +210,7 @@ def generate_parametric_data(lines, params, include_metrics=True):
                 total_len = cumlen[-1] if len(cumlen) > 0 else 0
                 
                 if total_len == 0:
-                    if include_metrics:
-                        results.append((line_name, None, None, "Zero path length", None))
-                    else:
-                        results.append((line_name, None, None, "Zero path length"))
+                    results.append((line_name, None, None, "Zero path length", None))
                     continue
                 
                 # Adjust n_points based on smoothness for Path Interpolation (higher smoothness reduces points)
@@ -263,17 +233,11 @@ def generate_parametric_data(lines, params, include_metrics=True):
                     x_smooth.append(p[0])
                     y_smooth.append(p[1])
                 
-                if include_metrics:
-                    fit_metrics = calculate_fit_metrics(x, y, np.array(x_smooth), np.array(y_smooth))
-                    results.append((line_name, np.array(x_smooth), np.array(y_smooth), None, fit_metrics))
-                else:
-                    results.append((line_name, np.array(x_smooth), np.array(y_smooth), None))
+                fit_metrics = calculate_fit_metrics(x, y, np.array(x_smooth), np.array(y_smooth))
+                results.append((line_name, np.array(x_smooth), np.array(y_smooth), None, fit_metrics))
         
         except Exception as e:
-            if include_metrics:
-                results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}", None))
-            else:
-                results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}"))
+            results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}", None))
     
     return results
 
@@ -367,7 +331,7 @@ def compare_parametric_modes(lines, n_points=200):
     """
     Compare all parametric sub-modes and display their smoothed curves for each line.
     Args:
-        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
+        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x) or (line_name, x, y, has_duplicates)
         n_points: Number of smoothed points (default 200)
     """
     st.subheader("Parametric Visual Comparison")
@@ -411,7 +375,15 @@ def compare_parametric_modes(lines, n_points=200):
         comparison_df = pd.DataFrame(comparison_data)
         st.dataframe(comparison_df, use_container_width=True)
     
-    for line_name, x, y, _, _ in lines:
+    # Extract line data handling both 4 and 5 value tuples
+    for line_data in lines:
+        if len(line_data) == 4:
+            line_name, x, y, _ = line_data
+        elif len(line_data) == 5:
+            line_name, x, y, _, _ = line_data
+        else:
+            line_name, x, y = line_data[0], line_data[1], line_data[2]
+            
         st.markdown(f"### Line: {line_name}")
         if len(x) < 2:
             st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 2).")
