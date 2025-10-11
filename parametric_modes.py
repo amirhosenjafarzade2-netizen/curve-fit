@@ -28,7 +28,7 @@ def generate_parametric_data(lines, params):
     Returns: List of (line_name, x_smooth, y_smooth, error_message)
     """
     results = []
-    n_points = params['n_points']
+    n_points = int(params['n_points'])  # Ensure it's an integer
     smoothness = params['smoothness']
 
     for line_name, x, y, _, _ in lines:
@@ -123,20 +123,21 @@ def create_parametric_excel(results):
                 continue
             worksheet.write(row, 0, line_name)
             row += 2
-            for x_val, y_val in zip(x_smooth, y_smooth):
-                worksheet.write(row, 0, x_val)
-                worksheet.write(row, 1, y_val)
+            # Write actual data points from x_smooth and y_smooth arrays
+            for i in range(len(x_smooth)):
+                worksheet.write(row, 0, float(x_smooth[i]))
+                worksheet.write(row, 1, float(y_smooth[i]))
                 row += 1
             row += 1  # Empty row between lines
     output.seek(0)
     return output
 
-def compare_parametric_modes(lines, n_points):
+def compare_parametric_modes(lines, n_points=200):
     """
     Compare all parametric sub-modes and display their smoothed curves for each line.
     Args:
         lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
-        n_points: Number of smoothed points
+        n_points: Number of smoothed points (default 200)
     """
     st.subheader("Parametric Visual Comparison")
     st.markdown("This mode compares all parametric sub-modes with default parameters for visual inspection.")
