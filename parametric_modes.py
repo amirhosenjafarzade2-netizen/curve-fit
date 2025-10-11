@@ -193,16 +193,25 @@ def main():
     """
     st.title("Parametric Fitting App")
     params = parametric_ui()
+    
     # Replace with your actual data source for lines_param
     lines_param = [
         ("Line1", [0, 1, 2, 3], [0, 1, 4, 9], False, False),
         ("Line2", [0, 1, 2], [0, 2, 0], False, False)
     ]
     
-    # Check for duplicate x-values in data
+    # Preprocess data to remove duplicates
+    def remove_duplicates(x, y):
+        xy = np.column_stack((x, y))
+        unique_xy = np.unique(xy, axis=0)
+        return unique_xy[:, 0], unique_xy[:, 1]
+    
+    lines_param = [(name, *remove_duplicates(x, y), False, False) for name, x, y, has_duplicates, has_invalid_x in lines_param]
+    
+    # Check for remaining duplicate x-values
     for line_name, x, y, _, _ in lines_param:
         if len(np.unique(x)) < len(x):
-            st.warning(f"Line '{line_name}' has duplicate x-values: {x}")
+            st.warning(f"Line '{line_name}' still has duplicate x-values: {x}")
     
     # Generate and plot smoothed data
     results = generate_parametric_data(lines_param, params)
