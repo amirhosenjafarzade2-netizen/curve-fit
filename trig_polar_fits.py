@@ -4,11 +4,14 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from sklearn.metrics import r2_score
 import sympy as sp
+import pandas as pd
+import io
+import random
 
 def trig_polar_ui():
     """
     Render UI for Trigonometric and Polar fitting mode.
-    Returns: Dictionary of parameters including fit_type and specific parameters
+    Returns: Dictionary of parameters including fit_type, specific parameters, and comparison options
     """
     params = {}
     fit_type_options = ["Trigonometric", "Polar"]
@@ -58,20 +61,24 @@ def trig_polar_ui():
             params['n_terms'] = st.number_input("Number of terms", min_value=1, max_value=2, value=2, help="Number of terms (reduced to avoid overfitting)")
     
     params['compare_modes'] = st.checkbox("Enable Visual Comparison of All Sub-Modes", value=False)
+    if params['compare_modes']:
+        params['show_all'] = st.checkbox("Show all lines", value=True)
+        if not params['show_all']:
+            params['n_lines'] = st.number_input("Number of random lines", min_value=1, max_value=10, value=3)
     return params
 
 def fit_trigonometric(x, y, trig_model, params):
     """
-    Fit a trigonometric model to the data.
-    Returns: coefficients, R², description, sympy formula
+    Fit a trigonometric model to the data with multipliers for x in sin, cos, etc.
+    Returns: coefficients, R², description, LaTeX formula
     """
     try:
         if trig_model == "Cosine + Sine":
             def trig_model_func(x, *p):
                 result = 0
                 for i in range(params['n_terms']):
-                    result += p[2*i] * np.cos(p[2*i+1] * x)
-                    result += p[2*i + params['n_terms']*2] * np.sin(p[2*i + params['n_terms']*2 + 1] * x)
+                    result += p[2*i] * np.cos(p[2*i+1] * x)  # Multiplier p[2*i+1] for x in cos(b*x)
+                    result += p[2*i + params['n_terms']*2] * np.sin(p[2*i + params['n_terms']*2 + 1] * x)  # Multiplier for x in sin(d*x)
                 result += p[-1]  # Constant term
                 return result
             n_params = 4 * params['n_terms'] + 1
@@ -84,11 +91,11 @@ def fit_trigonometric(x, y, trig_model, params):
                 formula += popt[2*i] * sp.cos(popt[2*i+1] * x_sym)
                 formula += popt[2*i + params['n_terms']*2] * sp.sin(popt[2*i + params['n_terms']*2 + 1] * x_sym)
             formula += popt[-1]
-            desc = f"Cosine + Sine: {params['n_terms']} terms + constant"
+            desc = f"Cosine + Sine: {params['n_terms']} terms (cos(b*x), sin(d*x)) + constant"
         
         elif trig_model == "Tan + Cot":
             def trig_model_func(x, a, b, c, d):
-                return a * np.tan(b * x) + c / np.tan(d * x)
+                return a * np.tan(b * x) + c / np.tan(d * x)  # Multipliers b and d for x
             popt, _ = curve_fit(trig_model_func, x, y, p0=[params['scale'], 1.0, params['scale'], 1.0], maxfev=10000)
             y_pred = trig_model_func(x, *popt)
             x_sym = sp.Symbol('x')
@@ -99,8 +106,8 @@ def fit_trigonometric(x, y, trig_model, params):
             def trig_model_func(x, *p):
                 result = 0
                 for i in range(params['n_terms']):
-                    result += p[2*i] * np.cosh(p[2*i+1] * x)
-                    result += p[2*i + params['n_terms']*2] * np.sinh(p[2*i + params['n_terms']*2 + 1] * x)
+                    result += p[2*i] * np.cosh(p[2*i+1] * x)  # Multiplier for x in cosh(b*x)
+                    result += p[2*i + params['n_terms']*2] * np.sinh(p[2*i + params['n_terms']*2 + 1] * x)  # Multiplier for x in sinh(d*x)
                 result += p[-1]
                 return result
             n_params = 4 * params['n_terms'] + 1
@@ -112,11 +119,11 @@ def fit_trigonometric(x, y, trig_model, params):
                 formula += popt[2*i] * sp.cosh(popt[2*i+1] * x_sym)
                 formula += popt[2*i + params['n_terms']*2] * sp.sinh(popt[2*i + params['n_terms']*2 + 1] * x_sym)
             formula += popt[-1]
-            desc = f"Hyperbolic: {params['n_terms']} cosh/sinh terms + constant"
+            desc = f"Hyperbolic: {params['n_terms']} cosh(b*x)/sinh(d*x) terms + constant"
         
         elif trig_model == "Inverse Trig":
             def trig_model_func(x, a, b, c, d):
-                return a * np.arctan(b * x) + c * np.arcsin(d * x / (1 + np.abs(d * x)))
+                return a * np.arctan(b * x) + c * np.arcsin(d * x / (1 + np.abs(d * x)))  # Multipliers b and d for x
             popt, _ = curve_fit(trig_model_func, x, y, p0=[params['scale'], 1.0, params['scale'], 1.0], maxfev=10000)
             y_pred = trig_model_func(x, *popt)
             x_sym = sp.Symbol('x')
@@ -127,7 +134,7 @@ def fit_trigonometric(x, y, trig_model, params):
             def trig_model_func(x, *p):
                 result = 0
                 for i in range(params['n_terms']):
-                    result += p[3*i] * np.cos(p[3*i+1] * x) * np.tan(p[3*i+2] * x)
+                    result += p[3*i] * np.cos(p[3*i+1] * x) * np.tan(p[3*i+2] * x)  # Multipliers for x in cos and tan
                 result += p[-1]
                 return result
             n_params = 3 * params['n_terms'] + 1
@@ -138,21 +145,18 @@ def fit_trigonometric(x, y, trig_model, params):
             for i in range(params['n_terms']):
                 formula += popt[3*i] * sp.cos(popt[3*i+1] * x_sym) * sp.tan(popt[3*i+2] * x_sym)
             formula += popt[-1]
-            desc = f"Complex Trig: {params['n_terms']} cos*tan terms + constant"
+            desc = f"Complex Trig: {params['n_terms']} cos(b*x)*tan(c*x) terms + constant"
         
         elif trig_model == "Combined":
             def trig_model_func(x, *p):
                 result = 0
                 n_terms = params['n_terms']
-                # Cosine + Sine terms
                 for i in range(n_terms):
-                    result += p[2*i] * np.cos(p[2*i+1] * x)
-                    result += p[2*i + n_terms*2] * np.sin(p[2*i + n_terms*2 + 1] * x)
-                # Hyperbolic terms
-                for i in range(n_terms):
-                    result += p[2*i + n_terms*4] * np.cosh(p[2*i + n_terms*4 + 1] * x)
-                    result += p[2*i + n_terms*6] * np.sinh(p[2*i + n_terms*6 + 1] * x)
-                result += p[-1]  # Constant term
+                    result += p[2*i] * np.cos(p[2*i+1] * x)  # cos(b*x)
+                    result += p[2*i + n_terms*2] * np.sin(p[2*i + n_terms*2 + 1] * x)  # sin(d*x)
+                    result += p[2*i + n_terms*4] * np.cosh(p[2*i + n_terms*4 + 1] * x)  # cosh(f*x)
+                    result += p[2*i + n_terms*6] * np.sinh(p[2*i + n_terms*6 + 1] * x)  # sinh(h*x)
+                result += p[-1]
                 return result
             n_params = 8 * params['n_terms'] + 1
             popt, _ = curve_fit(trig_model_func, x, y, p0=[0.5] * n_params, maxfev=15000)
@@ -165,7 +169,7 @@ def fit_trigonometric(x, y, trig_model, params):
                 formula += popt[2*i + n_terms*4] * sp.cosh(popt[2*i + n_terms*4 + 1] * x_sym)
                 formula += popt[2*i + n_terms*6] * sp.sinh(popt[2*i + n_terms*6 + 1] * x_sym)
             formula += popt[-1]
-            desc = f"Combined Trig: {params['n_terms']} cos/sin/cosh/sinh terms + constant"
+            desc = f"Combined Trig: {params['n_terms']} cos(b*x)/sin(d*x)/cosh(f*x)/sinh(h*x) terms + constant"
         
         r2 = r2_score(y, y_pred)
         formula_str = sp.latex(formula)
@@ -177,7 +181,7 @@ def fit_trigonometric(x, y, trig_model, params):
 def fit_polar(x, y, polar_model, params):
     """
     Fit a polar model to the data (x, y treated as Cartesian, converted to polar).
-    Returns: coefficients, R², description, sympy formula
+    Returns: coefficients, R², description, LaTeX formula
     """
     try:
         r = np.sqrt(x**2 + y**2)
@@ -203,7 +207,7 @@ def fit_polar(x, y, polar_model, params):
         
         elif polar_model == "Rose Curve":
             def polar_func(theta, a, n):
-                return a * np.cos(n * theta)
+                return a * np.cos(n * theta)  # Multiplier n for theta
             popt, _ = curve_fit(polar_func, theta, r, p0=[np.max(r), params['n_petals']], maxfev=10000)
             r_pred = polar_func(theta, *popt)
             x_pred = r_pred * np.cos(theta)
@@ -233,7 +237,7 @@ def fit_polar(x, y, polar_model, params):
             def polar_func(theta, *p):
                 result = 0
                 for i in range(params['n_terms']):
-                    result += p[2*i] * np.cos(p[2*i+1] * theta) * theta**i
+                    result += p[2*i] * np.cos(p[2*i+1] * theta) * theta**i  # Multiplier for theta in cos
                 result += p[-1]
                 return result
             n_params = 2 * params['n_terms'] + 1
@@ -242,7 +246,7 @@ def fit_polar(x, y, polar_model, params):
             x_pred = r_pred * np.cos(theta)
             y_pred = r_pred * np.sin(theta)
             residuals = np.sqrt((x - x_pred)**2 + (y - y_pred)**2)
-            r2 = 1 - np.sum(residuals**2) / np.sum((np.sqrt(x**2 + y**2) - np.mean(np.sqrt(x**2 + y**2))**2)
+            r2 = 1 - np.sum(residuals**2) / np.sum((np.sqrt(x**2 + y**2) - np.mean(np.sqrt(x**2 + y**2)))**2)
             theta_sym = sp.Symbol('theta')
             formula = sum(popt[2*i] * sp.cos(popt[2*i+1] * theta_sym) * theta_sym**i for i in range(params['n_terms'])) + popt[-1]
             desc = f"Complex Polar: r = {' + '.join(f'{popt[2*i]:.4f}*cos({popt[2*i+1]:.4f}*theta)*theta^{i}' for i in range(params['n_terms']))} + {popt[-1]:.4f}"
@@ -252,28 +256,25 @@ def fit_polar(x, y, polar_model, params):
             def polar_func(theta, *p):
                 result = 0
                 n_terms = params['n_terms']
-                # Power terms
                 for i in range(n_terms + 1):
                     result += p[i] * theta**i
-                # Rose curve term
-                result += p[n_terms + 1] * np.cos(p[n_terms + 2] * theta)
-                # Archimedean term
+                result += p[n_terms + 1] * np.cos(p[n_terms + 2] * theta)  # Multiplier for theta in cos
                 result += p[n_terms + 3] * theta
-                result += p[-1]  # Constant
+                result += p[-1]
                 return result
-            n_params = n_terms + 4  # power terms + rose (a, n) + spiral + constant
+            n_params = n_terms + 4
             popt, _ = curve_fit(polar_func, theta, r, p0=[0.5] * n_params, maxfev=15000)
             r_pred = polar_func(theta, *popt)
             x_pred = r_pred * np.cos(theta)
             y_pred = r_pred * np.sin(theta)
             residuals = np.sqrt((x - x_pred)**2 + (y - y_pred)**2)
-            r2 = 1 - np.sum(residuals**2) / np.sum((np.sqrt(x**2 + y**2) - np.mean(np.sqrt(x**2 + y**2))**2)
+            r2 = 1 - np.sum(residuals**2) / np.sum((np.sqrt(x**2 + y**2) - np.mean(np.sqrt(x**2 + y**2)))**2)
             theta_sym = sp.Symbol('theta')
             formula = sum(popt[i] * theta_sym**i for i in range(n_terms + 1))
             formula += popt[n_terms + 1] * sp.cos(popt[n_terms + 2] * theta_sym)
             formula += popt[n_terms + 3] * theta_sym
             formula += popt[-1]
-            desc = f"Combined Polar: power terms up to theta^{n_terms} + cos term + spiral + constant"
+            desc = f"Combined Polar: power terms up to theta^{n_terms} + cos(c*theta) + spiral + constant"
             formula_str = sp.latex(formula)
         
         return popt.tolist(), r2, desc, formula_str
@@ -358,14 +359,15 @@ def plot_trig_polar(x, y, coeffs, method, params, formula_str):
 
 def compare_trig_polar_modes(lines, params):
     """
-    Compare all Trigonometric and Polar sub-modes for each line.
+    Compare all Trigonometric and Polar sub-modes for selected lines.
     Args:
         lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
-        params: Parameters including n_points for plotting
+        params: Parameters including show_all, n_lines
+    Returns: None (displays plots and table, offers Excel download)
     """
     st.subheader("Trigonometric and Polar Visual Comparison")
-    st.markdown("This mode compares all trigonometric and polar sub-modes with default parameters for visual inspection.")
-    
+    st.markdown("Compare all trigonometric and polar sub-modes with default parameters for selected lines.")
+
     trig_methods = [
         ("Cosine + Sine", {"n_terms": 2}),
         ("Tan + Cot", {"scale": 1.0}),
@@ -383,20 +385,23 @@ def compare_trig_polar_modes(lines, params):
         ("Combined", {"n_terms": 1})
     ]
     
+    selected_lines = lines if params.get('show_all', True) else random.sample(lines, min(params.get('n_lines', 3), len(lines)))
+    
     results = {}
     for method, method_params in trig_methods:
         method_params['fit_type'] = "Trigonometric"
         method_params['trig_model'] = method
         results[f"Trig: {method}"] = [(line_name, *fit_trigonometric(x, y, method, method_params), has_duplicates, has_invalid_x)
-                                     for line_name, x, y, has_duplicates, has_invalid_x in lines]
+                                     for line_name, x, y, has_duplicates, has_invalid_x in selected_lines]
     
     for method, method_params in polar_methods:
         method_params['fit_type'] = "Polar"
         method_params['polar_model'] = method
         results[f"Polar: {method}"] = [(line_name, *fit_polar(x, y, method, method_params), has_duplicates, has_invalid_x)
-                                      for line_name, x, y, has_duplicates, has_invalid_x in lines]
+                                      for line_name, x, y, has_duplicates, has_invalid_x in selected_lines]
     
     comparison_data = []
+    max_coeffs = 0
     for method_key in results:
         fit_type, sub_model = method_key.split(": ")
         for line_name, coeffs, r2, desc, formula, has_duplicates, has_invalid_x in results[method_key]:
@@ -406,15 +411,17 @@ def compare_trig_polar_modes(lines, params):
                     'Fit Type': fit_type,
                     'Sub-Model': sub_model,
                     'R²': f"{r2:.4f}",
-                    'Description': desc
+                    'Description': desc,
+                    'Coefficients': coeffs
                 })
+                max_coeffs = max(max_coeffs, len(coeffs))
     
     if comparison_data:
         st.subheader("Fit Quality Comparison Table")
         comparison_df = pd.DataFrame(comparison_data)
-        st.dataframe(comparison_df, use_container_width=True)
+        st.dataframe(comparison_df[['Line', 'Fit Type', 'Sub-Model', 'R²', 'Description']], use_container_width=True)
     
-    for line_name, x, y, has_duplicates, has_invalid_x in lines:
+    for line_name, x, y, has_duplicates, has_invalid_x in selected_lines:
         st.markdown(f"### Line: {line_name}")
         if len(x) < 3:
             st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 3).")
@@ -442,3 +449,19 @@ def compare_trig_polar_modes(lines, params):
                 st.pyplot(fig)
             else:
                 st.warning(f"Line '{line_name}' - {method_key}: {result[3] if result else 'No result'}")
+    
+    if comparison_data:
+        output_df = pd.DataFrame([
+            [d['Line'], d['Fit Type'], d['Sub-Model'], d['Description']] + d['Coefficients'] + [float(d['R²'])]
+            for d in comparison_data
+        ], columns=['Line Name', 'Fit Type', 'Sub-Model', 'Model Desc'] + [f'param_{i}' for i in range(max_coeffs)] + ['R2'])
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            output_df.to_excel(writer, index=False, sheet_name='Trig_Polar_Comparison')
+        output.seek(0)
+        st.download_button(
+            label="Download Comparison Results Excel",
+            data=output,
+            file_name="trig_polar_comparison.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
