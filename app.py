@@ -556,13 +556,9 @@ if uploaded_file:
 
                 st.markdown("---")
 
-                # ── Line selection with per-line colors ──────────────────────────────
+                # ── Line selection — inline table ─────────────────────────────────
                 st.subheader("Line Selection")
 
-                line_names = [l[0] for l in lines]
-                plot_mode = st.radio("Lines to plot", ["Single line", "Multiple lines"], horizontal=True)
-
-                # Default color palette for multi-line
                 DEFAULT_LINE_COLORS = [
                     "#d32f2f", "#1976d2", "#388e3c", "#f57c00", "#7b1fa2",
                     "#0097a7", "#c62828", "#283593", "#e65100", "#4a148c",
@@ -574,47 +570,41 @@ if uploaded_file:
                     "#26c6da", "#d4e157", "#78909c", "#ff7043", "#3949ab",
                 ]
 
-                line_configs = []   # list of dicts: {name, line_color, point_color, show_points, show_fit}
+                line_names = [l[0] for l in lines]
 
-                if plot_mode == "Single line":
-                    selected_name = st.selectbox("Select line", line_names, key="viz_line_single")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        lc = st.color_picker("Fitted line color", viz_params.get('line_color', '#d32f2f'), key="slc_0")
-                    with col2:
-                        pc = st.color_picker("Data point color", viz_params.get('data_point_color', '#1976d2'), key="spc_0")
-                    show_pts  = st.checkbox("Show original data points", True, key="sshp_0")
-                    show_fit  = st.checkbox("Show fitted line", True, key="sshf_0")
-                    line_configs.append({'name': selected_name, 'line_color': lc, 'point_color': pc,
-                                         'show_points': show_pts, 'show_fit': show_fit})
+                # "Include all" master toggle
+                include_all = st.checkbox("Include all lines", value=True, key="viz_include_all")
 
-                else:  # Multiple lines
-                    selected_names = st.multiselect(
-                        "Select lines to plot (all will share the same fit method & appearance settings)",
-                        line_names,
-                        default=line_names[:min(3, len(line_names))],
-                        key="viz_multiline"
-                    )
-                    if not selected_names:
-                        st.info("Select at least one line above.")
-                    else:
-                        st.markdown("**Per-line color settings:**")
-                        # Show compact grid: 2 columns per line
-                        for i, name in enumerate(selected_names):
-                            default_lc = DEFAULT_LINE_COLORS[i % len(DEFAULT_LINE_COLORS)]
-                            default_pc = DEFAULT_POINT_COLORS[i % len(DEFAULT_POINT_COLORS)]
-                            with st.expander(f"Line: {name}", expanded=(i == 0)):
-                                col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-                                with col1:
-                                    lc = st.color_picker("Fitted line color", default_lc, key=f"mlc_{i}")
-                                with col2:
-                                    pc = st.color_picker("Data point color", default_pc, key=f"mpc_{i}")
-                                with col3:
-                                    show_pts = st.checkbox("Show points", True, key=f"mshp_{i}")
-                                with col4:
-                                    show_fit = st.checkbox("Show fit", True, key=f"mshf_{i}")
-                            line_configs.append({'name': name, 'line_color': lc, 'point_color': pc,
-                                                 'show_points': show_pts, 'show_fit': show_fit})
+                # Column headers
+                hcols = st.columns([2, 1, 1, 1, 1, 1])
+                hcols[0].markdown("**Line name**")
+                hcols[1].markdown("**Include**")
+                hcols[2].markdown("**Line color**")
+                hcols[3].markdown("**Point color**")
+                hcols[4].markdown("**Show fit**")
+                hcols[5].markdown("**Show points**")
+
+                st.divider()
+
+                line_configs = []
+                for i, name in enumerate(line_names):
+                    default_lc = DEFAULT_LINE_COLORS[i % len(DEFAULT_LINE_COLORS)]
+                    default_pc = DEFAULT_POINT_COLORS[i % len(DEFAULT_POINT_COLORS)]
+                    row = st.columns([2, 1, 1, 1, 1, 1])
+                    row[0].markdown(f"**{name}**")
+                    included  = row[1].checkbox("", value=include_all, key=f"viz_inc_{i}",
+                                                label_visibility="collapsed")
+                    lc        = row[2].color_picker("", default_lc, key=f"viz_lc_{i}",
+                                                    label_visibility="collapsed")
+                    pc        = row[3].color_picker("", default_pc, key=f"viz_pc_{i}",
+                                                    label_visibility="collapsed")
+                    show_fit  = row[4].checkbox("", value=True, key=f"viz_sf_{i}",
+                                                label_visibility="collapsed")
+                    show_pts  = row[5].checkbox("", value=True, key=f"viz_sp_{i}",
+                                                label_visibility="collapsed")
+                    if included:
+                        line_configs.append({'name': name, 'line_color': lc, 'point_color': pc,
+                                             'show_points': show_pts, 'show_fit': show_fit})
 
                 # ── Render button ────────────────────────────────────────────────────
                 if line_configs and st.button("Render Customized Plot"):
