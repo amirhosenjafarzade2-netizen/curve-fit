@@ -13,6 +13,7 @@ from random_forest import fit_random_forest, plot_random_forest, random_forest_u
 from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
 from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
 from parametric_modes import parametric_ui, generate_parametric_data, plot_parametric, create_parametric_excel, compare_parametric_modes
+from visualization import visualization_ui, apply_plot_customizations
 
 # Custom CSS for button styling and cleaner expander styling
 st.markdown("""
