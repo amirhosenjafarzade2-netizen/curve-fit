@@ -5,6 +5,8 @@
 
 import streamlit as st
 import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 import io
 import random
 from utils import parse_excel, suggest_best_method, fit_polynomial, fit_exponential, fit_logarithmic, fit_compound_poly_log, fit_spline, fit_savgol, fit_lowess, fit_exponential_smoothing, fit_gaussian_smoothing, fit_wavelet_denoising
@@ -510,11 +512,11 @@ if uploaded_file:
             elif mode == "Plot Customization":
                 st.subheader("Plot Customization")
                 st.markdown(
-                    "Choose a fitting method, then customize every visual aspect of the resulting matplotlib plot "
-                    "(colors, fonts, grid, tick spacing, axis limits, legend, DPI, and more)."
+                    "Choose a fitting method, customize the plot appearance, then select one or more lines "
+                    "to render together on a single graph — each with its own color."
                 )
 
-                # ── Method & params ──────────────────────────────────────────────────
+                # ── Method & fitting params ──────────────────────────────────────────
                 method_options = [
                     "Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log",
                     "Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing",
@@ -549,140 +551,209 @@ if uploaded_file:
 
                 st.markdown("---")
 
-                # ── Visualization controls ───────────────────────────────────────────
+                # ── Visualization controls (shared for all lines) ────────────────────
                 viz_params = visualization_ui(default_title="Curve Fit Plot")
 
                 st.markdown("---")
 
-                # ── Line selection ───────────────────────────────────────────────────
+                # ── Line selection with per-line colors ──────────────────────────────
+                st.subheader("Line Selection")
+
                 line_names = [l[0] for l in lines]
-                selected_line_name = st.selectbox("Select line to preview", line_names, key="viz_line")
+                plot_mode = st.radio("Lines to plot", ["Single line", "Multiple lines"], horizontal=True)
 
-                if st.button("Render Customized Plot"):
-                    target = next((l for l in lines if l[0] == selected_line_name), None)
-                    if target is None:
-                        st.error("Selected line not found.")
+                # Default color palette for multi-line
+                DEFAULT_LINE_COLORS = [
+                    "#d32f2f", "#1976d2", "#388e3c", "#f57c00", "#7b1fa2",
+                    "#0097a7", "#c62828", "#283593", "#e65100", "#4a148c",
+                    "#006064", "#827717", "#37474f", "#bf360c", "#1a237e",
+                ]
+                DEFAULT_POINT_COLORS = [
+                    "#ef9a9a", "#90caf9", "#a5d6a7", "#ffcc80", "#ce93d8",
+                    "#80deea", "#ef5350", "#5c6bc0", "#ffa726", "#ab47bc",
+                    "#26c6da", "#d4e157", "#78909c", "#ff7043", "#3949ab",
+                ]
+
+                line_configs = []   # list of dicts: {name, line_color, point_color, show_points, show_fit}
+
+                if plot_mode == "Single line":
+                    selected_name = st.selectbox("Select line", line_names, key="viz_line_single")
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        lc = st.color_picker("Fitted line color", viz_params.get('line_color', '#d32f2f'), key="slc_0")
+                    with col2:
+                        pc = st.color_picker("Data point color", viz_params.get('data_point_color', '#1976d2'), key="spc_0")
+                    show_pts  = st.checkbox("Show original data points", True, key="sshp_0")
+                    show_fit  = st.checkbox("Show fitted line", True, key="sshf_0")
+                    line_configs.append({'name': selected_name, 'line_color': lc, 'point_color': pc,
+                                         'show_points': show_pts, 'show_fit': show_fit})
+
+                else:  # Multiple lines
+                    selected_names = st.multiselect(
+                        "Select lines to plot (all will share the same fit method & appearance settings)",
+                        line_names,
+                        default=line_names[:min(3, len(line_names))],
+                        key="viz_multiline"
+                    )
+                    if not selected_names:
+                        st.info("Select at least one line above.")
                     else:
-                        _, x_viz, y_viz, has_dup_viz, has_inv_viz = target
-                        if len(x_viz) < min_points_viz:
-                            st.warning(f"Not enough points for {method} (need {min_points_viz}).")
-                        else:
+                        st.markdown("**Per-line color settings:**")
+                        # Show compact grid: 2 columns per line
+                        for i, name in enumerate(selected_names):
+                            default_lc = DEFAULT_LINE_COLORS[i % len(DEFAULT_LINE_COLORS)]
+                            default_pc = DEFAULT_POINT_COLORS[i % len(DEFAULT_POINT_COLORS)]
+                            with st.expander(f"Line: {name}", expanded=(i == 0)):
+                                col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                                with col1:
+                                    lc = st.color_picker("Fitted line color", default_lc, key=f"mlc_{i}")
+                                with col2:
+                                    pc = st.color_picker("Data point color", default_pc, key=f"mpc_{i}")
+                                with col3:
+                                    show_pts = st.checkbox("Show points", True, key=f"mshp_{i}")
+                                with col4:
+                                    show_fit = st.checkbox("Show fit", True, key=f"mshf_{i}")
+                            line_configs.append({'name': name, 'line_color': lc, 'point_color': pc,
+                                                 'show_points': show_pts, 'show_fit': show_fit})
+
+                # ── Render button ────────────────────────────────────────────────────
+                if line_configs and st.button("Render Customized Plot"):
+                    n_pts  = int(viz_params.get('curve_n_points', 500))
+                    sm_method = viz_params.get('post_smooth_method', 'None')
+                    fs    = viz_params.get('fig_size', (10, 6))
+
+                    fig_viz, ax_viz = plt.subplots(figsize=fs)
+
+                    all_r2   = []
+                    any_drawn = False
+
+                    for cfg in line_configs:
+                        target = next((l for l in lines if l[0] == cfg['name']), None)
+                        if target is None:
+                            st.warning(f"Line '{cfg['name']}' not found, skipping.")
+                            continue
+
+                        _, x_v, y_v, has_dup_v, has_inv_v = target
+
+                        if len(x_v) < min_points_viz:
+                            st.warning(f"Line '{cfg['name']}': not enough points for {method} (need {min_points_viz}), skipping.")
+                            continue
+
+                        # ── Fit ───────────────────────────────────────────────────────
+                        try:
+                            coeffs_v, r2_v, desc_v = fit_funcs[method](x_v, y_v, **fit_params)
+                        except Exception as e:
+                            st.warning(f"Line '{cfg['name']}': fit failed — {e}")
+                            continue
+
+                        if coeffs_v is None:
+                            st.warning(f"Line '{cfg['name']}': {desc_v}")
+                            continue
+
+                        all_r2.append((cfg['name'], r2_v))
+
+                        # ── Original data points ───────────────────────────────────────
+                        if cfg['show_points']:
+                            ax_viz.scatter(
+                                x_v, y_v,
+                                color=cfg['point_color'],
+                                s=viz_params.get('data_point_size', 45),
+                                alpha=viz_params.get('data_point_alpha', 0.85),
+                                marker=viz_params.get('data_point_marker', 'o'),
+                                edgecolors=viz_params.get('data_edge_color', '#ffffff'),
+                                linewidths=viz_params.get('data_edge_width', 0.5),
+                                label=f"{cfg['name']} (data)",
+                                zorder=int(viz_params.get('data_point_zorder', 3)),
+                            )
+
+                        # ── Fitted line ────────────────────────────────────────────────
+                        if cfg['show_fit']:
+                            # Extract line from temp figure, resample to n_pts
                             try:
-                                import numpy as _np
-                                fit_func = fit_funcs[method]
-                                coeffs_viz, r2_viz, desc_viz = fit_func(x_viz, y_viz, **fit_params)
-
-                                if coeffs_viz is None:
-                                    st.warning(f"Fit failed: {desc_viz}")
-                                else:
-                                    # ── Build the rendered curve directly ──────────────
-                                    # Use curve_n_points from viz_params for resolution
-                                    n_pts = int(viz_params.get('curve_n_points', 500))
-
-                                    # Get x/y of the fitted line from a temp figure,
-                                    # but now with the user-controlled resolution baked in
-                                    fig_tmp = plot_funcs[method](x_viz, y_viz, coeffs_viz, method, fit_params)
-                                    ax_tmp  = fig_tmp.axes[0]
-
-                                    # Extract the fitted line (first Line2D with substantial points)
-                                    line_xd, line_yd, line_label = None, None, desc_viz
-                                    for artist in ax_tmp.get_lines():
-                                        xd_raw = _np.array(artist.get_xdata())
-                                        yd_raw = _np.array(artist.get_ydata())
-                                        if len(xd_raw) >= 2:
-                                            # Re-interpolate at desired resolution using the extracted curve
-                                            xi = _np.linspace(float(xd_raw.min()), float(xd_raw.max()), n_pts)
-                                            yi = _np.interp(xi, xd_raw, yd_raw)
-                                            line_xd, line_yd = xi, yi
-                                            line_label = artist.get_label() or desc_viz
-                                            break
-                                    plt.close(fig_tmp)
-
-                                    if line_xd is None:
-                                        st.warning("Could not extract fitted line from plot function.")
-                                    else:
-                                        # ── Apply post-fit smoothing ───────────────────
-                                        line_xd, line_yd = smooth_rendered_line(line_xd, line_yd, viz_params)
-
-                                        # ── Build custom figure ────────────────────────
-                                        fs = viz_params.get('fig_size', (10, 6))
-                                        fig_viz, ax_viz = plt.subplots(figsize=fs)
-
-                                        # Original data points
-                                        ax_viz.scatter(
-                                            x_viz, y_viz,
-                                            color=viz_params['data_point_color'],
-                                            s=viz_params.get('data_point_size', 45),
-                                            alpha=viz_params.get('data_point_alpha', 0.85),
-                                            marker=viz_params.get('data_point_marker', 'o'),
-                                            edgecolors=viz_params.get('data_edge_color', '#ffffff'),
-                                            linewidths=viz_params.get('data_edge_width', 0.5),
-                                            label="Original data",
-                                            zorder=int(viz_params.get('data_point_zorder', 3))
-                                        )
-
-                                        # Fitted / smoothed line
-                                        plot_kw = dict(
-                                            color=viz_params['line_color'],
-                                            lw=viz_params['line_width'],
-                                            ls=viz_params['line_style'],
-                                            alpha=viz_params.get('line_alpha', 1.0),
-                                            label=line_label,
-                                            zorder=int(viz_params.get('line_zorder', 5)),
-                                        )
-                                        # Markers on fitted line
-                                        show_m = viz_params.get('show_markers', 'None')
-                                        if show_m == "All points":
-                                            plot_kw['marker']      = viz_params.get('marker', 'o')
-                                            plot_kw['markersize']  = viz_params.get('marker_size', 6)
-                                            plot_kw['markerfacecolor'] = viz_params.get('marker_color', viz_params['line_color'])
-                                            plot_kw['markeredgecolor'] = viz_params.get('marker_edge_color', '#ffffff')
-                                            plot_kw['markeredgewidth'] = viz_params.get('marker_edge_width', 1.0)
-                                        elif show_m == "Every N points":
-                                            every = int(viz_params.get('marker_every', 10))
-                                            plot_kw['marker']      = viz_params.get('marker', 'o')
-                                            plot_kw['markersize']  = viz_params.get('marker_size', 6)
-                                            plot_kw['markerfacecolor'] = viz_params.get('marker_color', viz_params['line_color'])
-                                            plot_kw['markeredgecolor'] = viz_params.get('marker_edge_color', '#ffffff')
-                                            plot_kw['markeredgewidth'] = viz_params.get('marker_edge_width', 1.0)
-                                            plot_kw['markevery']   = every
-
-                                        ax_viz.plot(line_xd, line_yd, **plot_kw)
-
-                                        # ── Show active smoothing info ─────────────────
-                                        sm = viz_params.get('post_smooth_method', 'None')
-                                        smooth_info = ""
-                                        if sm == "Moving Average":
-                                            smooth_info = f"  •  Moving Avg window={viz_params.get('post_smooth_window',11)} pts"
-                                        elif sm == "Gaussian":
-                                            smooth_info = f"  •  Gaussian σ={viz_params.get('post_smooth_sigma',10):.0f} pts"
-                                        elif sm == "Spline Resample":
-                                            smooth_info = f"  •  Spline s={viz_params.get('post_smooth_spline_s',0.1):.2f}"
-
-                                        # ── Build metrics text for box ─────────────────
-                                        m_text = f"R² = {r2_viz:.5f}"
-                                        if sm != "None":
-                                            m_text += f"\nPost-smooth: {sm}"
-
-                                        # ── Apply all visual customizations ────────────
-                                        apply_plot_customizations(
-                                            fig_viz, ax_viz, viz_params,
-                                            r2=r2_viz, metrics_text=m_text
-                                        )
-
-                                        st.write(
-                                            f"**{desc_viz}** — R² = {r2_viz:.4f} "
-                                            f"| Curve resolution: {n_pts} pts{smooth_info}"
-                                        )
-                                        st.pyplot(fig_viz)
-
-                                        # Export button
-                                        show_export_button(fig_viz, viz_params,
-                                                           filename_stem=f"{selected_line_name}_{method.lower().replace(' ','_')}")
-                                        plt.close(fig_viz)
-
+                                fig_tmp = plot_funcs[method](x_v, y_v, coeffs_v, method, fit_params)
+                                ax_tmp  = fig_tmp.axes[0]
+                                line_xd, line_yd, line_label = None, None, desc_v
+                                for artist in ax_tmp.get_lines():
+                                    xd_raw = np.array(artist.get_xdata())
+                                    yd_raw = np.array(artist.get_ydata())
+                                    if len(xd_raw) >= 2:
+                                        xi = np.linspace(float(xd_raw.min()), float(xd_raw.max()), n_pts)
+                                        yi = np.interp(xi, xd_raw, yd_raw)
+                                        line_xd, line_yd = xi, yi
+                                        line_label = artist.get_label() or desc_v
+                                        break
+                                plt.close(fig_tmp)
                             except Exception as e:
-                                st.warning(f"Could not render plot: {str(e)}")
+                                st.warning(f"Line '{cfg['name']}': could not extract curve — {e}")
+                                continue
+
+                            if line_xd is None:
+                                continue
+
+                            # Apply post-fit smoothing
+                            line_xd, line_yd = smooth_rendered_line(line_xd, line_yd, viz_params)
+
+                            plot_kw = dict(
+                                color=cfg['line_color'],
+                                lw=viz_params['line_width'],
+                                ls=viz_params['line_style'],
+                                alpha=viz_params.get('line_alpha', 1.0),
+                                label=f"{cfg['name']} ({desc_v}, R²={r2_v:.3f})" if len(line_configs) > 1 else line_label,
+                                zorder=int(viz_params.get('line_zorder', 5)),
+                            )
+                            show_m = viz_params.get('show_markers', 'None')
+                            if show_m in ("All points", "Every N points"):
+                                plot_kw['marker']           = viz_params.get('marker', 'o')
+                                plot_kw['markersize']       = viz_params.get('marker_size', 6)
+                                plot_kw['markerfacecolor']  = cfg['line_color']
+                                plot_kw['markeredgecolor']  = viz_params.get('marker_edge_color', '#ffffff')
+                                plot_kw['markeredgewidth']  = viz_params.get('marker_edge_width', 1.0)
+                                if show_m == "Every N points":
+                                    plot_kw['markevery'] = int(viz_params.get('marker_every', 10))
+
+                            ax_viz.plot(line_xd, line_yd, **plot_kw)
+
+                        any_drawn = True
+
+                    if not any_drawn:
+                        st.error("No lines could be plotted.")
+                        plt.close(fig_viz)
+                    else:
+                        # Build metrics box text
+                        if all_r2:
+                            if len(all_r2) == 1:
+                                m_text = f"R² = {all_r2[0][1]:.5f}"
+                            else:
+                                m_text = "\n".join(f"{n}: R²={r:.4f}" for n, r in all_r2)
+                            sm = viz_params.get('post_smooth_method', 'None')
+                            if sm != 'None':
+                                m_text += f"\nPost-smooth: {sm}"
+                        else:
+                            m_text = None
+
+                        apply_plot_customizations(
+                            fig_viz, ax_viz, viz_params,
+                            metrics_text=m_text
+                        )
+
+                        # Summary line
+                        smooth_info = ""
+                        if sm_method == "Moving Average":
+                            smooth_info = f" | Moving Avg w={viz_params.get('post_smooth_window',11)}"
+                        elif sm_method == "Gaussian":
+                            smooth_info = f" | Gaussian σ={viz_params.get('post_smooth_sigma',10):.0f}"
+                        elif sm_method == "Spline Resample":
+                            smooth_info = f" | Spline s={viz_params.get('post_smooth_spline_s',0.1):.2f}"
+                        st.write(f"**{method}** | {len(line_configs)} line(s) | {n_pts} pts resolution{smooth_info}")
+
+                        st.pyplot(fig_viz)
+                        show_export_button(
+                            fig_viz, viz_params,
+                            filename_stem=f"custom_plot_{method.lower().replace(' ','_')}"
+                        )
+                        plt.close(fig_viz)
+
+
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
