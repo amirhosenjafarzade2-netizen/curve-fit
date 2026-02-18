@@ -13,7 +13,7 @@ from random_forest import fit_random_forest, plot_random_forest, random_forest_u
 from smooth_data import smooth_data_ui, generate_smoothed_data, create_smoothed_excel
 from outlier_cleaner import outlier_cleaner_ui, detect_outliers, plot_cleaned_data, create_cleaned_excel
 from parametric_modes import parametric_ui, generate_parametric_data, plot_parametric, create_parametric_excel, compare_parametric_modes
-from visualization import visualization_ui, apply_plot_customizations
+from visualization import visualization_ui, apply_plot_customizations, smooth_rendered_line, show_export_button
 
 # Custom CSS for button styling and cleaner expander styling
 st.markdown("""
@@ -568,75 +568,118 @@ if uploaded_file:
                             st.warning(f"Not enough points for {method} (need {min_points_viz}).")
                         else:
                             try:
+                                import numpy as _np
                                 fit_func = fit_funcs[method]
-                                if method == "Random Forest":
-                                    coeffs_viz, r2_viz, desc_viz = fit_func(x_viz, y_viz, **fit_params)
-                                else:
-                                    coeffs_viz, r2_viz, desc_viz = fit_func(x_viz, y_viz, **fit_params)
+                                coeffs_viz, r2_viz, desc_viz = fit_func(x_viz, y_viz, **fit_params)
 
                                 if coeffs_viz is None:
                                     st.warning(f"Fit failed: {desc_viz}")
                                 else:
-                                    # Build figure & axes then plot
-                                    fig_viz, ax_viz = plt.subplots(figsize=(10, 6))
+                                    # ── Build the rendered curve directly ──────────────
+                                    # Use curve_n_points from viz_params for resolution
+                                    n_pts = int(viz_params.get('curve_n_points', 500))
 
-                                    # Plot original data with customized color
-                                    ax_viz.scatter(
-                                        x_viz, y_viz,
-                                        color=viz_params['data_point_color'],
-                                        label="Original data", s=40, zorder=3, alpha=0.85
-                                    )
+                                    # Get x/y of the fitted line from a temp figure,
+                                    # but now with the user-controlled resolution baked in
+                                    fig_tmp = plot_funcs[method](x_viz, y_viz, coeffs_viz, method, fit_params)
+                                    ax_tmp  = fig_tmp.axes[0]
 
-                                    # Plot fitted curve
-                                    import numpy as _np
-                                    x_line = _np.linspace(float(x_viz.min()), float(x_viz.max()), 500)
-                                    plot_func = plot_funcs[method]
-                                    # We need to re-derive y from coefficients — use plot_func's output figure
-                                    # and extract the fitted line artist instead of re-fitting
-                                    # Simpler: call plot_func, grab the fitted line from ax, recreate on our fig
-                                    fig_tmp = plot_func(x_viz, y_viz, coeffs_viz, method, fit_params)
-                                    ax_tmp = fig_tmp.axes[0]
+                                    # Extract the fitted line (first Line2D with substantial points)
+                                    line_xd, line_yd, line_label = None, None, desc_viz
                                     for artist in ax_tmp.get_lines():
-                                        if "Fit" in (artist.get_label() or "") or artist.get_label().startswith("y =") or "Forest" in (artist.get_label() or "") or "Spline" in (artist.get_label() or "") or "Polynomial" in (artist.get_label() or "") or "Smoothing" in (artist.get_label() or "") or "LOWESS" in (artist.get_label() or "") or "Wavelet" in (artist.get_label() or "") or "Gaussian" in (artist.get_label() or ""):
-                                            xd, yd = artist.get_xdata(), artist.get_ydata()
-                                            ax_viz.plot(
-                                                xd, yd,
-                                                color=viz_params['line_color'],
-                                                lw=viz_params['line_width'],
-                                                ls=viz_params['line_style'],
-                                                label=artist.get_label(),
-                                                zorder=5
-                                            )
+                                        xd_raw = _np.array(artist.get_xdata())
+                                        yd_raw = _np.array(artist.get_ydata())
+                                        if len(xd_raw) >= 2:
+                                            # Re-interpolate at desired resolution using the extracted curve
+                                            xi = _np.linspace(float(xd_raw.min()), float(xd_raw.max()), n_pts)
+                                            yi = _np.interp(xi, xd_raw, yd_raw)
+                                            line_xd, line_yd = xi, yi
+                                            line_label = artist.get_label() or desc_viz
                                             break
-                                    else:
-                                        # fallback: plot all lines from tmp
-                                        for artist in ax_tmp.get_lines():
-                                            xd, yd = artist.get_xdata(), artist.get_ydata()
-                                            ax_viz.plot(xd, yd,
-                                                color=viz_params['line_color'],
-                                                lw=viz_params['line_width'],
-                                                ls=viz_params['line_style'],
-                                                label=desc_viz, zorder=5)
-                                            break
-
                                     plt.close(fig_tmp)
 
-                                    # Handle markers on the fitted line
-                                    show_m = viz_params.get('show_markers', 'None')
-                                    if show_m in ("All points", "Every N points"):
-                                        lines_ax = ax_viz.get_lines()
-                                        for ln in lines_ax:
-                                            every = viz_params.get('marker_every', 1) if show_m == "Every N points" else 1
-                                            ln.set_marker(viz_params.get('marker', 'o'))
-                                            ln.set_markersize(viz_params.get('marker_size', 6))
-                                            ln.set_markevery(every)
+                                    if line_xd is None:
+                                        st.warning("Could not extract fitted line from plot function.")
+                                    else:
+                                        # ── Apply post-fit smoothing ───────────────────
+                                        line_xd, line_yd = smooth_rendered_line(line_xd, line_yd, viz_params)
 
-                                    # Apply all visual customizations
-                                    apply_plot_customizations(fig_viz, ax_viz, viz_params)
+                                        # ── Build custom figure ────────────────────────
+                                        fs = viz_params.get('fig_size', (10, 6))
+                                        fig_viz, ax_viz = plt.subplots(figsize=fs)
 
-                                    st.write(f"**{desc_viz}** — R² = {r2_viz:.4f}")
-                                    st.pyplot(fig_viz)
-                                    plt.close(fig_viz)
+                                        # Original data points
+                                        ax_viz.scatter(
+                                            x_viz, y_viz,
+                                            color=viz_params['data_point_color'],
+                                            s=viz_params.get('data_point_size', 45),
+                                            alpha=viz_params.get('data_point_alpha', 0.85),
+                                            marker=viz_params.get('data_point_marker', 'o'),
+                                            edgecolors=viz_params.get('data_edge_color', '#ffffff'),
+                                            linewidths=viz_params.get('data_edge_width', 0.5),
+                                            label="Original data",
+                                            zorder=int(viz_params.get('data_point_zorder', 3))
+                                        )
+
+                                        # Fitted / smoothed line
+                                        plot_kw = dict(
+                                            color=viz_params['line_color'],
+                                            lw=viz_params['line_width'],
+                                            ls=viz_params['line_style'],
+                                            alpha=viz_params.get('line_alpha', 1.0),
+                                            label=line_label,
+                                            zorder=int(viz_params.get('line_zorder', 5)),
+                                        )
+                                        # Markers on fitted line
+                                        show_m = viz_params.get('show_markers', 'None')
+                                        if show_m == "All points":
+                                            plot_kw['marker']      = viz_params.get('marker', 'o')
+                                            plot_kw['markersize']  = viz_params.get('marker_size', 6)
+                                            plot_kw['markerfacecolor'] = viz_params.get('marker_color', viz_params['line_color'])
+                                            plot_kw['markeredgecolor'] = viz_params.get('marker_edge_color', '#ffffff')
+                                            plot_kw['markeredgewidth'] = viz_params.get('marker_edge_width', 1.0)
+                                        elif show_m == "Every N points":
+                                            every = int(viz_params.get('marker_every', 10))
+                                            plot_kw['marker']      = viz_params.get('marker', 'o')
+                                            plot_kw['markersize']  = viz_params.get('marker_size', 6)
+                                            plot_kw['markerfacecolor'] = viz_params.get('marker_color', viz_params['line_color'])
+                                            plot_kw['markeredgecolor'] = viz_params.get('marker_edge_color', '#ffffff')
+                                            plot_kw['markeredgewidth'] = viz_params.get('marker_edge_width', 1.0)
+                                            plot_kw['markevery']   = every
+
+                                        ax_viz.plot(line_xd, line_yd, **plot_kw)
+
+                                        # ── Show active smoothing info ─────────────────
+                                        sm = viz_params.get('post_smooth_method', 'None')
+                                        smooth_info = ""
+                                        if sm == "Moving Average":
+                                            smooth_info = f"  •  Moving Avg window={viz_params.get('post_smooth_window',11)} pts"
+                                        elif sm == "Gaussian":
+                                            smooth_info = f"  •  Gaussian σ={viz_params.get('post_smooth_sigma',10):.0f} pts"
+                                        elif sm == "Spline Resample":
+                                            smooth_info = f"  •  Spline s={viz_params.get('post_smooth_spline_s',0.1):.2f}"
+
+                                        # ── Build metrics text for box ─────────────────
+                                        m_text = f"R² = {r2_viz:.5f}"
+                                        if sm != "None":
+                                            m_text += f"\nPost-smooth: {sm}"
+
+                                        # ── Apply all visual customizations ────────────
+                                        apply_plot_customizations(
+                                            fig_viz, ax_viz, viz_params,
+                                            r2=r2_viz, metrics_text=m_text
+                                        )
+
+                                        st.write(
+                                            f"**{desc_viz}** — R² = {r2_viz:.4f} "
+                                            f"| Curve resolution: {n_pts} pts{smooth_info}"
+                                        )
+                                        st.pyplot(fig_viz)
+
+                                        # Export button
+                                        show_export_button(fig_viz, viz_params,
+                                                           filename_stem=f"{selected_line_name}_{method.lower().replace(' ','_')}")
+                                        plt.close(fig_viz)
 
                             except Exception as e:
                                 st.warning(f"Could not render plot: {str(e)}")
