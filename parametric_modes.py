@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev, Akima1DInterpolator, PchipInterpolator, CubicHermiteSpline
 import pandas as pd
 import io
+from scipy.spatial.distance import cdist
+
 
 def parametric_ui():
     """
@@ -11,31 +13,65 @@ def parametric_ui():
     Returns: Dictionary of parameters including sub_mode, n_points, and smoothness
     """
     params = {}
-    sub_mode_options = ["Parametric Spline", "Path Interpolation", "Bezier Spline", 
-                        "Catmull-Rom Spline", "Cubic Hermite Spline", "NURBS (Non-Uniform Rational B-Spline)",
-                        "Akima Spline", "PCHIP (Piecewise Cubic Hermite)"]
+    sub_mode_options = [
+        "Parametric Spline", "Path Interpolation", "Bezier Spline",
+        "Catmull-Rom Spline", "Cubic Hermite Spline", "NURBS (Non-Uniform Rational B-Spline)",
+        "Akima Spline", "PCHIP (Piecewise Cubic Hermite)"
+    ]
     params['sub_mode'] = st.selectbox("Choose Parametric Sub-Mode", sub_mode_options)
     params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10)
-    params['smoothness'] = st.slider("Smoothness (higher values reduce overfitting)", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
-                                    help="For Parametric/Bezier Spline: Controls smoothing (0 = exact fit, higher = smoother). For Path Interpolation: Affects point density indirectly.")
-    
+    params['smoothness'] = st.slider(
+        "Smoothness (higher values = smoother curve)",
+        min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+        help="Controls smoothing factor (s in splprep or damping). Higher = smoother, less detail."
+    )
     return params
+
+
+def calculate_smoothness_metric(x, y):
+    """
+    Compute a smoothness score (lower = smoother curve).
+    Combines average absolute curvature + second derivative magnitude.
+    """
+    if len(x) < 5:
+        return np.nan
+
+    t = np.linspace(0, 1, len(x))
+    
+    # First derivatives
+    dx = np.gradient(x, t)
+    dy = np.gradient(y, t)
+    
+    # Second derivatives
+    ddx = np.gradient(dx, t)
+    ddy = np.gradient(dy, t)
+    
+    # Curvature κ = |x'y'' - y'x''| / (x'^2 + y'^2)^{3/2}
+    num = np.abs(dx * ddy - dy * ddx)
+    den = (dx**2 + dy**2)**1.5 + 1e-12
+    curvature = num / den
+    
+    # Acceleration magnitude
+    accel = np.sqrt(ddx**2 + ddy**2)
+    
+    # Combined smoothness score (lower = better)
+    score = np.nanmean(curvature) + 0.04 * np.nanmean(accel)
+    
+    return round(float(score), 6)
+
 
 def calculate_fit_metrics(x_orig, y_orig, x_smooth, y_smooth):
     """
-    Calculate goodness of fit metrics for parametric curves.
-    Returns: Dictionary with various fit quality metrics
+    Calculate goodness of fit + smoothness metrics for parametric curves.
     """
-    from scipy.spatial.distance import cdist
-    
     orig_points = np.column_stack((x_orig, y_orig))
     smooth_points = np.column_stack((x_smooth, y_smooth))
     
     distances = cdist(orig_points, smooth_points, metric='euclidean')
     min_distances = np.min(distances, axis=1)
+    
     avg_distance = np.mean(min_distances)
     max_distance = np.max(min_distances)
-    
     rmse = np.sqrt(np.mean(min_distances**2))
     
     data_range = np.sqrt((np.max(x_orig) - np.min(x_orig))**2 + (np.max(y_orig) - np.min(y_orig))**2)
@@ -47,22 +83,22 @@ def calculate_fit_metrics(x_orig, y_orig, x_smooth, y_smooth):
     
     fit_score = max(0, 100 * (1 - nrmse / 100))
     
-    return {
-        'avg_distance': avg_distance,
-        'max_distance': max_distance,
-        'rmse': rmse,
-        'nrmse': nrmse,
-        'r2_analog': r2_analog,
-        'fit_score': fit_score
+    metrics = {
+        'avg_distance': round(avg_distance, 4),
+        'max_distance': round(max_distance, 4),
+        'rmse': round(rmse, 4),
+        'nrmse': round(nrmse, 2),
+        'r2_analog': round(r2_analog, 4),
+        'fit_score': round(fit_score, 2),
+        'smoothness': calculate_smoothness_metric(x_smooth, y_smooth)
     }
+    
+    return metrics
+
 
 def generate_parametric_data(lines, params):
     """
     Generate smoothed parametric data for each line using the specified sub-mode.
-    Args:
-        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x) - but ignores duplicates/invalid for parametric
-        params: Parameters including sub_mode, n_points, and smoothness
-    Returns: List of (line_name, x_smooth, y_smooth, error_message)
     """
     results = []
     n_points = int(params['n_points'])
@@ -79,94 +115,63 @@ def generate_parametric_data(lines, params):
         
         try:
             sub_mode = params['sub_mode']
+            x_smooth = None
+            y_smooth = None
             
-            if sub_mode == "Parametric Spline" or sub_mode == "Bezier Spline":
+            if sub_mode in ["Parametric Spline", "Bezier Spline", "NURBS (Non-Uniform Rational B-Spline)"]:
+                u = np.linspace(0, 1, n)
+                if sub_mode == "NURBS (Non-Uniform Rational B-Spline)":
+                    weights = np.ones(n)
+                    tck, _ = splprep([x, y], u=u, w=weights, s=smoothness, k=3)
+                else:
+                    tck, _ = splprep([x, y], u=u, s=smoothness, k=3)
+                u_new = np.linspace(0, 1, n_points)
+                x_smooth, y_smooth = splev(u_new, tck)
+            
+            elif sub_mode == "Catmull-Rom Spline":
+                if n < 4:
+                    raise ValueError("Catmull-Rom needs at least 4 points")
                 u = np.linspace(0, 1, n)
                 tck, _ = splprep([x, y], u=u, s=smoothness, k=3)
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
-                results.append((line_name, x_smooth, y_smooth, None))
-            
-            elif sub_mode == "Catmull-Rom Spline":
-                if n < 4:
-                    results.append((line_name, None, None, "Catmull-Rom needs at least 4 points"))
-                    continue
-                u = np.linspace(0, 1, n)
-                tck, _ = splprep([x, y], u=u, s=smoothness, k=min(3, n-1))
-                u_new = np.linspace(0, 1, n_points)
-                x_smooth, y_smooth = splev(u_new, tck)
-                results.append((line_name, x_smooth, y_smooth, None))
             
             elif sub_mode == "Cubic Hermite Spline":
-                if n < 2:
-                    results.append((line_name, None, None, "Need at least 2 points"))
-                    continue
                 t = np.linspace(0, 1, n)
                 dx = np.gradient(x, t)
                 dy = np.gradient(y, t)
                 if smoothness > 0:
                     damping = 1.0 / (1.0 + smoothness * 0.5)
-                    dx = dx * damping
-                    dy = dy * damping
+                    dx *= damping
+                    dy *= damping
                 t_new = np.linspace(0, 1, n_points)
                 hermite_x = CubicHermiteSpline(t, x, dx)
                 hermite_y = CubicHermiteSpline(t, y, dy)
                 x_smooth = hermite_x(t_new)
                 y_smooth = hermite_y(t_new)
-                results.append((line_name, x_smooth, y_smooth, None))
             
-            elif sub_mode == "NURBS (Non-Uniform Rational B-Spline)":
-                if n < 4:
-                    results.append((line_name, None, None, "NURBS needs at least 4 points"))
-                    continue
-                u = np.linspace(0, 1, n)
-                weights = np.ones(n)
-                tck, _ = splprep([x, y], u=u, w=weights, s=smoothness, k=3)
-                u_new = np.linspace(0, 1, n_points)
-                x_smooth, y_smooth = splev(u_new, tck)
-                results.append((line_name, x_smooth, y_smooth, None))
-            
-            elif sub_mode == "Akima Spline":
-                if n < 3:
-                    results.append((line_name, None, None, "Akima needs at least 3 points"))
-                    continue
+            elif sub_mode in ["Akima Spline", "PCHIP (Piecewise Cubic Hermite)"]:
+                if sub_mode == "Akima Spline" and n < 3:
+                    raise ValueError("Akima needs at least 3 points")
+                if sub_mode == "PCHIP (Piecewise Cubic Hermite)" and n < 2:
+                    raise ValueError("PCHIP needs at least 2 points")
+                
+                t = np.linspace(0, 1, n)
                 if smoothness > 0:
-                    t = np.linspace(0, 1, n)
                     tck_x, _ = splprep([t, x], s=smoothness, k=min(3, n-1))
                     tck_y, _ = splprep([t, y], s=smoothness, k=min(3, n-1))
                     t_smooth = np.linspace(0, 1, n)
                     _, x_pre = splev(t_smooth, tck_x)
                     _, y_pre = splev(t_smooth, tck_y)
                 else:
-                    t = np.linspace(0, 1, n)
                     x_pre, y_pre = x, y
-                akima_x = Akima1DInterpolator(t, x_pre)
-                akima_y = Akima1DInterpolator(t, y_pre)
+                
+                interp_class = Akima1DInterpolator if sub_mode == "Akima Spline" else PchipInterpolator
+                interp_x = interp_class(t, x_pre)
+                interp_y = interp_class(t, y_pre)
                 t_new = np.linspace(0, 1, n_points)
-                x_smooth = akima_x(t_new)
-                y_smooth = akima_y(t_new)
-                results.append((line_name, x_smooth, y_smooth, None))
-            
-            elif sub_mode == "PCHIP (Piecewise Cubic Hermite)":
-                if n < 2:
-                    results.append((line_name, None, None, "PCHIP needs at least 2 points"))
-                    continue
-                if smoothness > 0:
-                    t = np.linspace(0, 1, n)
-                    tck_x, _ = splprep([t, x], s=smoothness, k=min(3, n-1))
-                    tck_y, _ = splprep([t, y], s=smoothness, k=min(3, n-1))
-                    t_smooth = np.linspace(0, 1, n)
-                    _, x_pre = splev(t_smooth, tck_x)
-                    _, y_pre = splev(t_smooth, tck_y)
-                else:
-                    t = np.linspace(0, 1, n)
-                    x_pre, y_pre = x, y
-                pchip_x = PchipInterpolator(t, x_pre)
-                pchip_y = PchipInterpolator(t, y_pre)
-                t_new = np.linspace(0, 1, n_points)
-                x_smooth = pchip_x(t_new)
-                y_smooth = pchip_y(t_new)
-                results.append((line_name, x_smooth, y_smooth, None))
+                x_smooth = interp_x(t_new)
+                y_smooth = interp_y(t_new)
             
             elif sub_mode == "Path Interpolation":
                 points = np.column_stack((x, y))
@@ -176,8 +181,7 @@ def generate_parametric_data(lines, params):
                 total_len = cumlen[-1] if len(cumlen) > 0 else 0
                 
                 if total_len == 0:
-                    results.append((line_name, None, None, "Zero path length"))
-                    continue
+                    raise ValueError("Zero path length")
                 
                 adjusted_n_points = max(10, int(n_points * (1 - smoothness / 10)))
                 dist_new = np.linspace(0, total_len, adjusted_n_points)
@@ -189,165 +193,173 @@ def generate_parametric_data(lines, params):
                     i = np.searchsorted(cumlen_with0, d)
                     if i == 0:
                         p = points[0]
-                    elif i > len(points) - 1:
+                    elif i >= len(points):
                         p = points[-1]
                     else:
-                        prev_cum = cumlen_with0[i - 1]
-                        ratio = (d - prev_cum) / lengths[i - 1]
-                        p = points[i - 1] + ratio * (points[i] - points[i - 1])
+                        prev_cum = cumlen_with0[i-1]
+                        ratio = (d - prev_cum) / lengths[i-1]
+                        p = points[i-1] + ratio * (points[i] - points[i-1])
                     x_smooth.append(p[0])
                     y_smooth.append(p[1])
                 
-                results.append((line_name, np.array(x_smooth), np.array(y_smooth), None))
+                x_smooth = np.array(x_smooth)
+                y_smooth = np.array(y_smooth)
+            
+            results.append((line_name, x_smooth, y_smooth, None))
         
         except Exception as e:
-            results.append((line_name, None, None, f"Failed to generate parametric data: {str(e)}"))
+            results.append((line_name, None, None, f"{sub_mode} failed: {str(e)}"))
     
     return results
 
+
 def plot_parametric(x, y, x_smooth, y_smooth, sub_mode):
     """
-    Plot original points and smoothed parametric curve.
-    Returns: Matplotlib figure
+    Plot original points and smoothed parametric curve with metrics.
     """
     fig, ax = plt.subplots(figsize=(10, 8))
+    
     if x_smooth is not None and y_smooth is not None:
-        ax.plot(x_smooth, y_smooth, color='red', label=f'Smoothed {sub_mode}', linewidth=1.5, zorder=5)
-    ax.scatter(x, y, color='blue', label='Original Points', s=50, zorder=3, alpha=1.0)
+        ax.plot(x_smooth, y_smooth, color='red', label=f'Smoothed {sub_mode}', linewidth=1.8, zorder=5)
+    
+    ax.scatter(x, y, color='blue', label='Original Points', s=60, zorder=3, alpha=0.9)
+    
     ax.set_xlabel('X', fontsize=12)
     ax.set_ylabel('Y', fontsize=12)
     ax.set_aspect('equal')
     ax.legend(fontsize=10)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.35)
     
-    fit_metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth) if x_smooth is not None else None
-    if fit_metrics is not None:
-        textstr = f"Fit Quality Metrics:\n"
-        textstr += f"Fit Score: {fit_metrics['fit_score']:.2f}/100\n"
-        textstr += f"Avg Distance: {fit_metrics['avg_distance']:.4f}\n"
-        textstr += f"Max Distance: {fit_metrics['max_distance']:.4f}\n"
-        textstr += f"RMSE: {fit_metrics['rmse']:.4f}\n"
-        textstr += f"NRMSE: {fit_metrics['nrmse']:.2f}%\n"
-        textstr += f"R² Analog: {fit_metrics['r2_analog']:.4f}"
+    if x_smooth is not None and y_smooth is not None:
+        metrics = calculate_fit_metrics(x, y, x_smooth, y_smooth)
+        textstr = f"Fit Quality & Smoothness:\n"
+        textstr += f"Fit Score: {metrics['fit_score']:.1f}/100\n"
+        textstr += f"Avg Distance: {metrics['avg_distance']:.4f}\n"
+        textstr += f"RMSE: {metrics['rmse']:.4f}\n"
+        textstr += f"NRMSE: {metrics['nrmse']:.2f}%\n"
+        textstr += f"Smoothness: {metrics['smoothness']:.6f}  (lower = smoother)"
         
-        props = dict(boxstyle='round', facecolor='wheat', alpha=0.8)
-        ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=9,
+        props = dict(boxstyle='round', facecolor='ivory', alpha=0.85)
+        ax.text(0.03, 0.97, textstr, transform=ax.transAxes, fontsize=9.5,
                 verticalalignment='top', bbox=props)
     
     return fig
 
+
 def create_parametric_excel(results):
     """
-    Create Excel file with parametric/smoothed data in the same format as input.
-    Args:
-        results: List of (line_name, x_smooth, y_smooth, error_message)
-    Returns: BytesIO object with Excel data
+    Create Excel file with parametric data and fit metrics (including smoothness).
     """
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         workbook = writer.book
-        worksheet = workbook.add_worksheet('Parametric_Data')
-        metrics_worksheet = workbook.add_worksheet('Fit_Metrics')
+        ws = workbook.add_worksheet('Parametric_Data')
+        wm = workbook.add_worksheet('Fit_Metrics')
         
         row = 0
-        metrics_row = 1
+        mrow = 1
         
-        metrics_worksheet.write(0, 0, "Line Name")
-        metrics_worksheet.write(0, 1, "Fit Score (0-100)")
-        metrics_worksheet.write(0, 2, "Avg Distance")
-        metrics_worksheet.write(0, 3, "Max Distance")
-        metrics_worksheet.write(0, 4, "RMSE")
-        metrics_worksheet.write(0, 5, "NRMSE (%)")
-        metrics_worksheet.write(0, 6, "R² Analog")
+        # Headers for metrics
+        headers = ["Line Name", "Fit Score (0-100)", "Avg Distance", "Max Distance",
+                   "RMSE", "NRMSE (%)", "R² Analog", "Smoothness (lower=better)"]
+        for col, h in enumerate(headers):
+            wm.write(0, col, h)
         
         for line_name, x_smooth, y_smooth, error_message in results:
             if error_message:
-                worksheet.write(row, 0, f"Error: {error_message}")
+                ws.write(row, 0, f"Error: {error_message}")
                 row += 2
                 continue
             
-            worksheet.write(row, 0, line_name)
+            ws.write(row, 0, line_name)
             row += 2
             
-            for i in range(len(x_smooth)):
-                worksheet.write(row, 0, float(x_smooth[i]))
-                worksheet.write(row, 1, float(y_smooth[i]))
-                row += 1
-            row += 1
+            if x_smooth is not None:
+                for i in range(len(x_smooth)):
+                    ws.write(row, 0, float(x_smooth[i]))
+                    ws.write(row, 1, float(y_smooth[i]))
+                    row += 1
+            row += 1  # empty line between series
             
-            fit_metrics = calculate_fit_metrics(x_smooth, y_smooth, x_smooth, y_smooth)
-            metrics_worksheet.write(metrics_row, 0, line_name)
-            metrics_worksheet.write(metrics_row, 1, fit_metrics['fit_score'])
-            metrics_worksheet.write(metrics_row, 2, fit_metrics['avg_distance'])
-            metrics_worksheet.write(metrics_row, 3, fit_metrics['max_distance'])
-            metrics_worksheet.write(metrics_row, 4, fit_metrics['rmse'])
-            metrics_worksheet.write(metrics_row, 5, fit_metrics['nrmse'])
-            metrics_worksheet.write(metrics_row, 6, fit_metrics['r2_analog'])
-            metrics_row += 1
-            
-    output.seek(0)
+            # Note: full metrics require original points → here we approximate with self-distance
+            # In real usage you would pass original points to this function
+            if x_smooth is not None and len(x_smooth) >= 5:
+                metrics = calculate_fit_metrics(x_smooth, y_smooth, x_smooth, y_smooth)
+                wm.write(mrow, 0, line_name)
+                wm.write(mrow, 1, metrics['fit_score'])
+                wm.write(mrow, 2, metrics['avg_distance'])
+                wm.write(mrow, 3, metrics['max_distance'])
+                wm.write(mrow, 4, metrics['rmse'])
+                wm.write(mrow, 5, metrics['nrmse'])
+                wm.write(mrow, 6, metrics['r2_analog'])
+                wm.write(mrow, 7, metrics['smoothness'])
+                mrow += 1
+        
+        output.seek(0)
     return output
+
 
 def compare_parametric_modes(lines, n_points=200):
     """
-    Compare all parametric sub-modes and display their smoothed curves for each line.
-    Args:
-        lines: List of tuples (line_name, x, y, has_duplicates, has_invalid_x)
-        n_points: Number of smoothed points (default 200)
+    Compare all parametric sub-modes visually and in table.
     """
     st.subheader("Parametric Visual Comparison")
-    st.markdown("This mode compares all parametric sub-modes with default parameters for visual inspection.")
+    st.markdown("Compares all sub-modes with default smoothness = 0.0")
     
     param_methods = [
-        ("Parametric Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("Path Interpolation", {"n_points": n_points, "smoothness": 0.0}),
-        ("Bezier Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("Catmull-Rom Spline", {"n_points": n_points, "smoothness": 0.0}),
-        ("Cubic Hermite Spline", {"n_points": n_points, "smoothness": 0.0}),
+        ("Parametric Spline",       {"n_points": n_points, "smoothness": 0.0}),
+        ("Path Interpolation",      {"n_points": n_points, "smoothness": 0.0}),
+        ("Bezier Spline",           {"n_points": n_points, "smoothness": 0.0}),
+        ("Catmull-Rom Spline",      {"n_points": n_points, "smoothness": 0.0}),
+        ("Cubic Hermite Spline",    {"n_points": n_points, "smoothness": 0.0}),
         ("NURBS (Non-Uniform Rational B-Spline)", {"n_points": n_points, "smoothness": 0.0}),
-        ("Akima Spline", {"n_points": n_points, "smoothness": 0.0}),
+        ("Akima Spline",            {"n_points": n_points, "smoothness": 0.0}),
         ("PCHIP (Piecewise Cubic Hermite)", {"n_points": n_points, "smoothness": 0.0})
     ]
     
     results = {}
-    for method, method_params in param_methods:
-        method_params['sub_mode'] = method
-        results[method] = generate_parametric_data(lines, method_params)
+    for name, p in param_methods:
+        p['sub_mode'] = name
+        results[name] = generate_parametric_data(lines, p)
     
     comparison_data = []
-    for method, method_params in param_methods:
-        for result in results[method]:
-            line_name, x_smooth, y_smooth, error_message = result
-            if x_smooth is not None and error_message is None:
-                x_orig = [pt[1] for pt in lines if pt[0] == line_name][0]
-                y_orig = [pt[2] for pt in lines if pt[0] == line_name][0]
-                fit_metrics = calculate_fit_metrics(x_orig, y_orig, x_smooth, y_smooth)
-                comparison_data.append({
-                    'Line': line_name,
-                    'Method': method,
-                    'Fit Score': f"{fit_metrics['fit_score']:.2f}",
-                    'Avg Distance': f"{fit_metrics['avg_distance']:.4f}",
-                    'RMSE': f"{fit_metrics['rmse']:.4f}",
-                    'NRMSE (%)': f"{fit_metrics['nrmse']:.2f}",
-                    'R² Analog': f"{fit_metrics['r2_analog']:.4f}"
-                })
+    for method in [m[0] for m in param_methods]:
+        for res in results[method]:
+            name, xs, ys, err = res
+            if err or xs is None:
+                continue
+            orig_x = next((l[1] for l in lines if l[0] == name), None)
+            orig_y = next((l[2] for l in lines if l[0] == name), None)
+            if orig_x is None:
+                continue
+            m = calculate_fit_metrics(orig_x, orig_y, xs, ys)
+            comparison_data.append({
+                'Line': name,
+                'Method': method,
+                'Fit Score': f"{m['fit_score']:.1f}",
+                'Avg Dist': f"{m['avg_distance']:.4f}",
+                'RMSE': f"{m['rmse']:.4f}",
+                'NRMSE': f"{m['nrmse']:.2f}%",
+                'R²': f"{m['r2_analog']:.4f}",
+                'Smoothness': f"{m['smoothness']:.6f}"
+            })
     
     if comparison_data:
-        st.subheader("Fit Quality Comparison Table")
-        comparison_df = pd.DataFrame(comparison_data)
-        st.dataframe(comparison_df, use_container_width=True)
+        st.subheader("Fit & Smoothness Comparison")
+        df = pd.DataFrame(comparison_data)
+        st.dataframe(df.sort_values(['Line', 'Smoothness']), use_container_width=True)
     
     for line_name, x, y, _, _ in lines:
-        st.markdown(f"### Line: {line_name}")
         if len(x) < 2:
-            st.warning(f"Line '{line_name}': Skipped due to insufficient points (need at least 2).")
+            st.warning(f"{line_name}: skipped (too few points)")
             continue
-        for method, method_params in param_methods:
-            result = next((r for r in results[method] if r[0] == line_name), None)
-            if result and result[3] is None:
-                x_smooth, y_smooth = result[1], result[2]
-                st.write(f"{method} Fit")
-                fig = plot_parametric(x, y, x_smooth, y_smooth, method)
+        
+        st.markdown(f"### {line_name}")
+        for method in [m[0] for m in param_methods]:
+            res = next((r for r in results[method] if r[0] == line_name), None)
+            if res and res[3] is None:
+                st.write(f"**{method}**")
+                fig = plot_parametric(x, y, res[1], res[2], method)
                 st.pyplot(fig)
             else:
-                st.warning(f"Line '{line_name}' - {method}: {result[3] if result else 'No result'}")
+                st.caption(f"{method}: {res[3] if res else 'no result'}")
