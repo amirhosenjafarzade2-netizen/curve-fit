@@ -135,7 +135,8 @@ if uploaded_file:
 
             # Mode selection
             mode = st.radio("Select Mode", ["Curve Fit", "Visual Comparison with Graphs", "Download Smoothed Data",
-                                           "Outlier Detection and Cleaning", "Parametric Fitting"])
+                                           "Outlier Detection and Cleaning", "Parametric Fitting",
+                                           "Plot Customization"])
 
             # Define fit and plot functions for reuse
             fit_funcs = {
@@ -505,6 +506,140 @@ if uploaded_file:
                                 file_name=f"{sub_mode.lower().replace(' ', '_')}_parametric_data.xlsx",
                                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                             )
+
+            elif mode == "Plot Customization":
+                st.subheader("Plot Customization")
+                st.markdown(
+                    "Choose a fitting method, then customize every visual aspect of the resulting matplotlib plot "
+                    "(colors, fonts, grid, tick spacing, axis limits, legend, DPI, and more)."
+                )
+
+                # ── Method & params ──────────────────────────────────────────────────
+                method_options = [
+                    "Polynomial", "Exponential", "Logarithmic", "Compound Poly+Log",
+                    "Spline", "Savitzky-Golay", "LOWESS", "Exponential Smoothing",
+                    "Gaussian Smoothing", "Wavelet Denoising", "Random Forest"
+                ]
+                method = st.selectbox("Choose Fitting Method", method_options, key="viz_method")
+
+                fit_params = {}
+                min_points_viz = 3
+                if method == "Polynomial":
+                    fit_params['degree'] = st.number_input("Polynomial Degree", min_value=1, max_value=10, value=2, key="viz_deg")
+                    min_points_viz = fit_params['degree'] + 1
+                elif method == "Spline":
+                    fit_params['degree'] = st.number_input("Spline Degree (1-5)", min_value=1, max_value=5, value=3, key="viz_spldeg")
+                    min_points_viz = fit_params['degree'] + 1
+                elif method == "Savitzky-Golay":
+                    fit_params['window'] = st.number_input("Window length (odd ≥3)", min_value=3, max_value=101, value=5, step=2, key="viz_win")
+                    fit_params['polyorder'] = st.number_input("Polynomial order", min_value=0, max_value=5, value=2, key="viz_po")
+                    min_points_viz = fit_params['window']
+                elif method == "LOWESS":
+                    fit_params['frac'] = st.slider("LOWESS fraction", 0.1, 1.0, 0.3, 0.05, key="viz_frac")
+                elif method == "Exponential Smoothing":
+                    fit_params['alpha'] = st.slider("Alpha", 0.0, 1.0, 0.5, 0.05, key="viz_alpha")
+                elif method == "Gaussian Smoothing":
+                    fit_params['sigma'] = st.number_input("Sigma", 0.1, 10.0, 1.0, 0.1, key="viz_sigma")
+                elif method == "Wavelet Denoising":
+                    fit_params['wavelet'] = st.selectbox("Wavelet", ['db4','haar','sym4','coif1'], key="viz_wav")
+                    fit_params['level'] = st.number_input("Level", 1, 5, 1, key="viz_lvl")
+                    fit_params['threshold'] = st.slider("Threshold", 0.0, 1.0, 0.1, 0.05, key="viz_thr")
+                elif method == "Random Forest":
+                    fit_params = random_forest_ui()
+
+                st.markdown("---")
+
+                # ── Visualization controls ───────────────────────────────────────────
+                viz_params = visualization_ui(default_title="Curve Fit Plot")
+
+                st.markdown("---")
+
+                # ── Line selection ───────────────────────────────────────────────────
+                line_names = [l[0] for l in lines]
+                selected_line_name = st.selectbox("Select line to preview", line_names, key="viz_line")
+
+                if st.button("Render Customized Plot"):
+                    target = next((l for l in lines if l[0] == selected_line_name), None)
+                    if target is None:
+                        st.error("Selected line not found.")
+                    else:
+                        _, x_viz, y_viz, has_dup_viz, has_inv_viz = target
+                        if len(x_viz) < min_points_viz:
+                            st.warning(f"Not enough points for {method} (need {min_points_viz}).")
+                        else:
+                            try:
+                                fit_func = fit_funcs[method]
+                                if method == "Random Forest":
+                                    coeffs_viz, r2_viz, desc_viz = fit_func(x_viz, y_viz, **fit_params)
+                                else:
+                                    coeffs_viz, r2_viz, desc_viz = fit_func(x_viz, y_viz, **fit_params)
+
+                                if coeffs_viz is None:
+                                    st.warning(f"Fit failed: {desc_viz}")
+                                else:
+                                    # Build figure & axes then plot
+                                    fig_viz, ax_viz = plt.subplots(figsize=(10, 6))
+
+                                    # Plot original data with customized color
+                                    ax_viz.scatter(
+                                        x_viz, y_viz,
+                                        color=viz_params['data_point_color'],
+                                        label="Original data", s=40, zorder=3, alpha=0.85
+                                    )
+
+                                    # Plot fitted curve
+                                    import numpy as _np
+                                    x_line = _np.linspace(float(x_viz.min()), float(x_viz.max()), 500)
+                                    plot_func = plot_funcs[method]
+                                    # We need to re-derive y from coefficients — use plot_func's output figure
+                                    # and extract the fitted line artist instead of re-fitting
+                                    # Simpler: call plot_func, grab the fitted line from ax, recreate on our fig
+                                    fig_tmp = plot_func(x_viz, y_viz, coeffs_viz, method, fit_params)
+                                    ax_tmp = fig_tmp.axes[0]
+                                    for artist in ax_tmp.get_lines():
+                                        if "Fit" in (artist.get_label() or "") or artist.get_label().startswith("y =") or "Forest" in (artist.get_label() or "") or "Spline" in (artist.get_label() or "") or "Polynomial" in (artist.get_label() or "") or "Smoothing" in (artist.get_label() or "") or "LOWESS" in (artist.get_label() or "") or "Wavelet" in (artist.get_label() or "") or "Gaussian" in (artist.get_label() or ""):
+                                            xd, yd = artist.get_xdata(), artist.get_ydata()
+                                            ax_viz.plot(
+                                                xd, yd,
+                                                color=viz_params['line_color'],
+                                                lw=viz_params['line_width'],
+                                                ls=viz_params['line_style'],
+                                                label=artist.get_label(),
+                                                zorder=5
+                                            )
+                                            break
+                                    else:
+                                        # fallback: plot all lines from tmp
+                                        for artist in ax_tmp.get_lines():
+                                            xd, yd = artist.get_xdata(), artist.get_ydata()
+                                            ax_viz.plot(xd, yd,
+                                                color=viz_params['line_color'],
+                                                lw=viz_params['line_width'],
+                                                ls=viz_params['line_style'],
+                                                label=desc_viz, zorder=5)
+                                            break
+
+                                    plt.close(fig_tmp)
+
+                                    # Handle markers on the fitted line
+                                    show_m = viz_params.get('show_markers', 'None')
+                                    if show_m in ("All points", "Every N points"):
+                                        lines_ax = ax_viz.get_lines()
+                                        for ln in lines_ax:
+                                            every = viz_params.get('marker_every', 1) if show_m == "Every N points" else 1
+                                            ln.set_marker(viz_params.get('marker', 'o'))
+                                            ln.set_markersize(viz_params.get('marker_size', 6))
+                                            ln.set_markevery(every)
+
+                                    # Apply all visual customizations
+                                    apply_plot_customizations(fig_viz, ax_viz, viz_params)
+
+                                    st.write(f"**{desc_viz}** — R² = {r2_viz:.4f}")
+                                    st.pyplot(fig_viz)
+                                    plt.close(fig_viz)
+
+                            except Exception as e:
+                                st.warning(f"Could not render plot: {str(e)}")
 
     except ValueError as e:
         st.error(f"Failed to read Excel file: {str(e)}")
