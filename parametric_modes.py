@@ -20,11 +20,27 @@ def parametric_ui():
     ]
     params['sub_mode'] = st.selectbox("Choose Parametric Sub-Mode", sub_mode_options)
     params['n_points'] = st.number_input("Number of smoothed points per line", min_value=10, max_value=1000, value=200, step=10)
-    params['smoothness'] = st.slider(
-        "Smoothness (higher values = smoother curve)",
-        min_value=0.0, max_value=10.0, value=0.0, step=0.1,
-        help="Controls smoothing factor (s in splprep or damping). Higher = smoother, less detail."
+
+    st.markdown(
+        "**Smoothness** — `0.0` = exact interpolation (passes through every point). "
+        "Increase to trade fidelity for smoothness. For spline-based modes the value is "
+        "scaled automatically by the number of points; "
+        "for Cubic Hermite it damps tangent magnitudes; "
+        "for Path Interpolation it reduces output point count."
     )
+
+    smoothness_mode = st.radio("Smoothness input mode", ["Simple (0–10 scale)", "Raw s value (advanced)"],
+                               horizontal=True, key="smooth_mode")
+    if smoothness_mode == "Simple (0–10 scale)":
+        simple_s = st.slider("Smoothness", min_value=0.0, max_value=10.0, value=0.0, step=0.1,
+                             help="0 = interpolate exactly. 1–3 = gentle. 5+ = heavy smoothing. Internally scaled by n·σ².")
+        params['smoothness'] = simple_s
+        params['smoothness_simple'] = True   # flag to auto-scale in generate
+    else:
+        params['smoothness'] = st.number_input("Raw splprep s value", min_value=0.0, value=0.0, step=0.5,
+                                                format="%.2f",
+                                                help="Directly passed to splprep. Suitable range depends heavily on data scale.")
+        params['smoothness_simple'] = False
     return params
 
 
@@ -102,7 +118,8 @@ def generate_parametric_data(lines, params):
     """
     results = []
     n_points = int(params['n_points'])
-    smoothness = params['smoothness']
+    smoothness_raw = params['smoothness']
+    simple_mode = params.get('smoothness_simple', False)
 
     for line_name, x, y, _, _ in lines:
         x = np.array(x)
@@ -113,26 +130,29 @@ def generate_parametric_data(lines, params):
             results.append((line_name, None, None, "Insufficient points (need at least 2)"))
             continue
         
+        # Auto-scale s: in simple mode, s_raw ∈ [0,10] → scaled to n * combined_variance * factor
+        if simple_mode and smoothness_raw > 0:
+            data_variance = np.var(x) + np.var(y)
+            # s = 0 → exact; s=10 → heavy. Scale: n * variance * (raw/10)^1.5
+            smoothness = n * data_variance * ((smoothness_raw / 10.0) ** 1.5)
+        else:
+            smoothness = smoothness_raw
+        
         try:
             sub_mode = params['sub_mode']
             x_smooth = None
             y_smooth = None
             
-            if sub_mode in ["Parametric Spline", "Bezier Spline", "NURBS (Non-Uniform Rational B-Spline)"]:
+            if sub_mode in ["Parametric Spline", "Bezier Spline", "NURBS (Non-Uniform Rational B-Spline)",
+                            "Catmull-Rom Spline"]:
+                if sub_mode == "Catmull-Rom Spline" and n < 4:
+                    raise ValueError("Catmull-Rom needs at least 4 points")
                 u = np.linspace(0, 1, n)
                 if sub_mode == "NURBS (Non-Uniform Rational B-Spline)":
                     weights = np.ones(n)
-                    tck, _ = splprep([x, y], u=u, w=weights, s=smoothness, k=3)
+                    tck, _ = splprep([x, y], u=u, w=weights, s=smoothness, k=min(3, n-1))
                 else:
-                    tck, _ = splprep([x, y], u=u, s=smoothness, k=3)
-                u_new = np.linspace(0, 1, n_points)
-                x_smooth, y_smooth = splev(u_new, tck)
-            
-            elif sub_mode == "Catmull-Rom Spline":
-                if n < 4:
-                    raise ValueError("Catmull-Rom needs at least 4 points")
-                u = np.linspace(0, 1, n)
-                tck, _ = splprep([x, y], u=u, s=smoothness, k=3)
+                    tck, _ = splprep([x, y], u=u, s=smoothness, k=min(3, n-1))
                 u_new = np.linspace(0, 1, n_points)
                 x_smooth, y_smooth = splev(u_new, tck)
             
@@ -140,8 +160,9 @@ def generate_parametric_data(lines, params):
                 t = np.linspace(0, 1, n)
                 dx = np.gradient(x, t)
                 dy = np.gradient(y, t)
-                if smoothness > 0:
-                    damping = 1.0 / (1.0 + smoothness * 0.5)
+                if smoothness_raw > 0:
+                    # damping: simple_mode raw ∈[0,10] → damping factor ∈ [1, 0.05]
+                    damping = 1.0 / (1.0 + smoothness_raw * 0.5)
                     dx *= damping
                     dy *= damping
                 t_new = np.linspace(0, 1, n_points)
@@ -153,8 +174,6 @@ def generate_parametric_data(lines, params):
             elif sub_mode in ["Akima Spline", "PCHIP (Piecewise Cubic Hermite)"]:
                 if sub_mode == "Akima Spline" and n < 3:
                     raise ValueError("Akima needs at least 3 points")
-                if sub_mode == "PCHIP (Piecewise Cubic Hermite)" and n < 2:
-                    raise ValueError("PCHIP needs at least 2 points")
                 
                 t = np.linspace(0, 1, n)
                 if smoothness > 0:
@@ -183,27 +202,21 @@ def generate_parametric_data(lines, params):
                 if total_len == 0:
                     raise ValueError("Zero path length")
                 
-                adjusted_n_points = max(10, int(n_points * (1 - smoothness / 10)))
-                dist_new = np.linspace(0, total_len, adjusted_n_points)
                 cumlen_with0 = np.insert(cumlen, 0, 0)
-                x_smooth = []
-                y_smooth = []
-                
-                for d in dist_new:
-                    i = np.searchsorted(cumlen_with0, d)
-                    if i == 0:
-                        p = points[0]
-                    elif i >= len(points):
-                        p = points[-1]
-                    else:
-                        prev_cum = cumlen_with0[i-1]
-                        ratio = (d - prev_cum) / lengths[i-1]
-                        p = points[i-1] + ratio * (points[i] - points[i-1])
-                    x_smooth.append(p[0])
-                    y_smooth.append(p[1])
-                
-                x_smooth = np.array(x_smooth)
-                y_smooth = np.array(y_smooth)
+                dist_new = np.linspace(0, total_len, n_points)
+                x_interp = np.interp(dist_new, cumlen_with0, x)
+                y_interp = np.interp(dist_new, cumlen_with0, y)
+
+                # Apply smoothing via splprep if smoothness > 0
+                if smoothness_raw > 0:
+                    try:
+                        tck, _ = splprep([x_interp, y_interp], s=smoothness, k=min(3, n_points-1))
+                        u_new = np.linspace(0, 1, n_points)
+                        x_smooth, y_smooth = splev(u_new, tck)
+                    except Exception:
+                        x_smooth, y_smooth = x_interp, y_interp
+                else:
+                    x_smooth, y_smooth = x_interp, y_interp
             
             results.append((line_name, x_smooth, y_smooth, None))
         
@@ -307,14 +320,14 @@ def compare_parametric_modes(lines, n_points=200):
     st.markdown("Compares all sub-modes with default smoothness = 0.0")
     
     param_methods = [
-        ("Parametric Spline",       {"n_points": n_points, "smoothness": 0.0}),
-        ("Path Interpolation",      {"n_points": n_points, "smoothness": 0.0}),
-        ("Bezier Spline",           {"n_points": n_points, "smoothness": 0.0}),
-        ("Catmull-Rom Spline",      {"n_points": n_points, "smoothness": 0.0}),
-        ("Cubic Hermite Spline",    {"n_points": n_points, "smoothness": 0.0}),
-        ("NURBS (Non-Uniform Rational B-Spline)", {"n_points": n_points, "smoothness": 0.0}),
-        ("Akima Spline",            {"n_points": n_points, "smoothness": 0.0}),
-        ("PCHIP (Piecewise Cubic Hermite)", {"n_points": n_points, "smoothness": 0.0})
+        ("Parametric Spline",       {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("Path Interpolation",      {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("Bezier Spline",           {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("Catmull-Rom Spline",      {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("Cubic Hermite Spline",    {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("NURBS (Non-Uniform Rational B-Spline)", {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("Akima Spline",            {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False}),
+        ("PCHIP (Piecewise Cubic Hermite)", {"n_points": n_points, "smoothness": 0.0, "smoothness_simple": False})
     ]
     
     results = {}
